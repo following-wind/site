@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Following Wind</title>
+<style>
+  :root {
+    --accent: #7B4FBF;
+    --ink: #23201e;
+    --sub: #6d6763;
+    --rule: #e2ddd8;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: #fff;
+    color: var(--ink);
+    font-family: "Meiryo UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
+    line-break: strict;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  .wrap {
+    max-width: 34rem;
+    margin: 0 auto;
+    padding: 0 1.5rem 6rem;
+  }
+
+  header {
+    padding: 5rem 0 3rem;
+  }
+
+  .kanban {
+    font-size: 0.75rem;
+    letter-spacing: 0.18em;
+    color: var(--sub);
+    margin: 0 0 0.8rem;
+  }
+
+  h1 {
+    font-size: 1.75rem;
+    font-weight: 700;
+    margin: 0 0 1rem;
+    letter-spacing: 0.04em;
+  }
+
+  .lead {
+    font-size: 0.875rem;
+    line-height: 1.95;
+    color: var(--sub);
+    margin: 0;
+  }
+
+  nav {
+    border-top: 1px solid var(--rule);
+  }
+
+  nav a {
+    display: block;
+    padding: 1.75rem 0.4rem 1.75rem 1rem;
+    border-bottom: 1px solid var(--rule);
+    border-left: 4px solid transparent;
+    text-decoration: none;
+    color: inherit;
+    transition: border-left-color .15s, padding-left .15s;
+  }
+
+  nav a:hover,
+  nav a:focus-visible {
+    border-left-color: var(--accent);
+    padding-left: 1.3rem;
+  }
+
+  nav .title {
+    font-size: 1.0625rem;
+    font-weight: 700;
+    margin: 0 0 0.4rem;
+  }
+
+  nav .desc {
+    font-size: 0.8125rem;
+    line-height: 1.85;
+    color: var(--sub);
+    margin: 0;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+  }
+
+  @media (max-width: 480px) {
+    .wrap { padding: 0 1.1rem 4rem; }
+    header { padding: 3.5rem 0 2.5rem; }
+    h1 { font-size: 1.5rem; }
+    nav a { padding: 1.4rem 0.4rem 1.4rem 1rem; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <p class="kanban">FOLLOWING WIND</p>
+    <h1>追い風</h1>
+    <p class="lead">忘れやすい操作の覚え書きと、読んだ本の記録を置いています。</p>
+  </header>
+
+  <nav>
+    <a href="tips/">
+      <p class="title">操作メモ</p>
+      <p class="desc">Mac や Scrivener の、思い出せなくなる操作をキーワードで引けるようにしたもの。</p>
+    </a>
+    <a href="books/">
+      <p class="title">読書</p>
+      <p class="desc">読んだ本について、覚えているうちに書いておくところ。</p>
+    </a>
+  </nav>
+
+</div>
+
+<!-- Cloudflare Web Analytics --><script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "828a78bbd4cd49cf8697d9f0eb6d5699"}'></script><!-- End Cloudflare Web Analytics -->
+</body>
+</html>
