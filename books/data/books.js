@@ -22,7 +22,8 @@ window.BOOKS = [
     book: {
       title: "暇と退屈の倫理学",
       author: "國分功一郎",
-      publisher: "新潮文庫"
+      publisher: "新潮文庫",
+      url: "https://www.amazon.co.jp/dp/4101035415"
     }
   }
 ];

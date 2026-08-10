@@ -116,6 +116,23 @@
     font-size: 0.9375rem;
   }
 
+  .okuduke .shoshi-link {
+    margin: 0.9rem 0 0;
+    padding-top: 0.8rem;
+    border-top: 1px solid var(--rule);
+    font-size: 0.8125rem;
+  }
+
+  .okuduke .shoshi-link a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+
+  .okuduke .shoshi-link a:hover,
+  .okuduke .shoshi-link a:focus-visible {
+    text-decoration: underline;
+  }
+
   /* ── フッター ── */
   footer {
     border-top: 1px solid var(--rule);
@@ -234,6 +251,19 @@
     });
 
     box.appendChild(dl);
+
+    if (info.url) {
+      var p = document.createElement("p");
+      p.className = "shoshi-link";
+      var a = document.createElement("a");
+      a.href = info.url;
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.textContent = "この本を見る";
+      p.appendChild(a);
+      box.appendChild(p);
+    }
+
     return box;
   }
 
