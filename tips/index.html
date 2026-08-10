@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>操作メモ</title>
+
+<!--
+  ============================================================
+  新しいアプリの操作メモを追加する手順
+  ============================================================
+  1. data/ フォルダに新しいファイルを作る（例: data/keynote.js）
+     data/macos.js か data/scrivener.js をコピーして
+     中身（app / title / keys / note / tags）を書き換える。
+
+  2. data/manifest.js の配列に、そのファイル名を1行追加する。
+     例: "keynote.js" を追記する。
+
+  3. このindex.htmlは変更不要。ブラウザでこのファイルを
+     開き直せば、新しいアプリのタブが自動で増える。
+
+  tagsは検索にだけ使われ、カードには表示されない。
+  スペース区切りで、思いつく言い換えを詰め込んでおくと検索が楽になる。
+  ============================================================
+-->
+
+<style>
+  :root {
+    --accent: #D85A30;
+    --accent-pale: #FAECE7;
+    --text: #2C2C2A;
+    --text-sub: #5F5E5A;
+    --border: #D3D1C7;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    background: #ffffff;
+    color: var(--text);
+    font-family: "Meiryo UI", Meiryo, "Hiragino Kaku Gothic ProN", sans-serif;
+  }
+
+  /* 上部固定バー（検索欄＋タブ） */
+  .top-bar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: #ffffff;
+    border-bottom: 1px solid var(--border);
+    padding: 16px 20px;
+  }
+
+  .search-wrap {
+    position: relative;
+    max-width: 480px;
+    margin: 0 auto 14px;
+  }
+
+  .search-wrap svg {
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    pointer-events: none;
+  }
+
+  #search {
+    width: 100%;
+    padding: 10px 14px 10px 36px;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    font-size: 0.95rem;
+    font-family: inherit;
+    color: var(--text);
+    outline: none;
+  }
+
+  #search:focus {
+    border-color: var(--accent);
+  }
+
+  .tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+  }
+
+  .tab-btn {
+    border: 1px solid var(--border);
+    background: #ffffff;
+    color: var(--text-sub);
+    padding: 6px 14px;
+    border-radius: 16px;
+    font-size: 0.85rem;
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  .tab-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .tab-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #ffffff;
+  }
+
+  /* カード一覧 */
+  main {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 24px 20px 60px;
+  }
+
+  #results {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 16px;
+  }
+
+  .card {
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--accent);
+    border-radius: 8px;
+    padding: 14px 16px;
+    background: #ffffff;
+  }
+
+  .card-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .card-app {
+    color: var(--accent);
+    font-size: 0.75rem;
+    font-weight: bold;
+  }
+
+  .card-title {
+    font-size: 1rem;
+    font-weight: bold;
+    color: var(--text);
+    margin-top: 2px;
+    line-break: strict;
+    min-width: 140px;
+  }
+
+  .card-keys {
+    flex: 0 0 auto;
+    background: var(--accent-pale);
+    color: var(--accent);
+    font-size: 0.85rem;
+    font-weight: bold;
+    padding: 5px 10px;
+    border-radius: 4px;
+    white-space: nowrap;
+  }
+
+  .card-note {
+    margin-top: 10px;
+    color: var(--text-sub);
+    font-size: 0.85rem;
+    line-height: 1.5;
+  }
+
+  #no-results {
+    display: none;
+    text-align: center;
+    color: var(--text-sub);
+    padding: 60px 0;
+  }
+</style>
+</head>
+<body>
+
+<div class="top-bar">
+  <div class="search-wrap">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5F5E5A" stroke-width="2">
+      <circle cx="11" cy="11" r="7"></circle>
+      <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+    </svg>
+    <input id="search" type="text" placeholder="操作を検索（例: スクショ）">
+  </div>
+  <div class="tabs" id="tabs"></div>
+</div>
+
+<main>
+  <div id="results"></div>
+  <div id="no-results">見つかりません</div>
+</main>
+
+<!-- dataファイルの一覧（増やすときはmanifest.jsだけ触る） -->
+<script src="data/manifest.js"></script>
+
+<script>
+  var currentTab = "すべて";
+  var currentQuery = "";
+
+  function loadDataFiles(files, onDone) {
+    var remaining = files.length;
+    if (remaining === 0) { onDone(); return; }
+    files.forEach(function (file) {
+      var s = document.createElement("script");
+      s.src = "data/" + file;
+      s.onload = function () {
+        remaining--;
+        if (remaining === 0) onDone();
+      };
+      document.body.appendChild(s);
+    });
+  }
+
+  function getApps() {
+    var seen = [];
+    window.TIPS.forEach(function (tip) {
+      if (seen.indexOf(tip.app) === -1) seen.push(tip.app);
+    });
+    return seen;
+  }
+
+  function renderTabs() {
+    var tabsEl = document.getElementById("tabs");
+    var apps = ["すべて"].concat(getApps());
+    tabsEl.innerHTML = "";
+    apps.forEach(function (app) {
+      var btn = document.createElement("button");
+      btn.className = "tab-btn" + (app === currentTab ? " active" : "");
+      btn.textContent = app;
+      btn.addEventListener("click", function () {
+        currentTab = app;
+        renderTabs();
+        renderResults();
+      });
+      tabsEl.appendChild(btn);
+    });
+  }
+
+  function matches(tip, query) {
+    if (!query) return true;
+    var haystack = [tip.title, tip.keys, tip.note, tip.tags].join(" ").toLowerCase();
+    return haystack.indexOf(query) !== -1;
+  }
+
+  function renderResults() {
+    var resultsEl = document.getElementById("results");
+    var noResultsEl = document.getElementById("no-results");
+    var query = currentQuery.trim().toLowerCase();
+
+    var list = window.TIPS.filter(function (tip) {
+      var tabOk = currentTab === "すべて" || tip.app === currentTab;
+      return tabOk && matches(tip, query);
+    });
+
+    resultsEl.innerHTML = "";
+    if (list.length === 0) {
+      noResultsEl.style.display = "block";
+      return;
+    }
+    noResultsEl.style.display = "none";
+
+    list.forEach(function (tip) {
+      var card = document.createElement("div");
+      card.className = "card";
+
+      var noteHtml = tip.note ? '<div class="card-note">' + escapeHtml(tip.note) + "</div>" : "";
+
+      card.innerHTML =
+        '<div class="card-head">' +
+          '<div>' +
+            '<div class="card-app">' + escapeHtml(tip.app) + "</div>" +
+            '<div class="card-title">' + escapeHtml(tip.title) + "</div>" +
+          "</div>" +
+          '<div class="card-keys">' + escapeHtml(tip.keys) + "</div>" +
+        "</div>" +
+        noteHtml;
+
+      resultsEl.appendChild(card);
+    });
+  }
+
+  function escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  function init() {
+    renderTabs();
+    renderResults();
+    document.getElementById("search").addEventListener("input", function (e) {
+      currentQuery = e.target.value;
+      renderResults();
+    });
+  }
+
+  window.TIPS = window.TIPS || [];
+  loadDataFiles(window.TIPS_FILES || [], init);
+</script>
+
+</body>
+</html>
