@@ -19,5 +19,26 @@ window.TIPS = (window.TIPS || []).concat([
     keys: "Cmd ・ Shift ・ 3",
     note: "",
     tags: "スクショ 全画面"
+  },
+  {
+    app: "macOS",
+    title: "表示を大きくする",
+    keys: "Cmd ・ +",
+    note: "VS Code では Cmd ・ Shift ・ +。ブラウザなど多くのアプリで共通",
+    tags: "拡大 ズーム 大きく 文字 表示倍率 VSCode"
+  },
+  {
+    app: "macOS",
+    title: "表示を小さくする",
+    keys: "Cmd ・ -",
+    note: "VS Code も同じ。ブラウザなど多くのアプリで共通",
+    tags: "縮小 ズーム 小さく 文字 表示倍率 VSCode"
+  },
+  {
+    app: "macOS",
+    title: "表示を標準に戻す",
+    keys: "Cmd ・ 0",
+    note: "拡大・縮小したあと、元の倍率に戻す。VS Code も同じ",
+    tags: "リセット 元に戻す 標準 100% 表示倍率 VSCode"
   }
 ]);
