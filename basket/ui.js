@@ -54,6 +54,20 @@ function renderAbilityBars(player) {
   return html;
 }
 
+// 前シーズンの1試合平均成績。得点・リバウンド・アシスト・スティールを
+// SEASON_GAMES(36試合)で割って1行にする。まだ一度もplaySeason()を
+// 経験していない選手（新人としてFAにいる間、または初シーズン中）は
+// player.statsが無いので、その旨を表示する。
+function perGameStatsLine(player) {
+  if (!player.stats) return "前シーズン成績なし（新人）";
+  var games = SEASON_GAMES;
+  var ppg = (player.stats.points / games).toFixed(1);
+  var rpg = (player.stats.rebounds / games).toFixed(1);
+  var apg = (player.stats.assists / games).toFixed(1);
+  var spg = (player.stats.steals / games).toFixed(1);
+  return ppg + "点 " + rpg + "R " + apg + "A " + spg + "S";
+}
+
 function renderPlayerCard(player) {
   var card = document.createElement("div");
   card.className = "player-card";
@@ -66,6 +80,7 @@ function renderPlayerCard(player) {
       '<span class="stat-chip">総合 ' + Math.round(overall(player)) + '</span>' +
       '<span class="stat-chip">年俸 ' + playerSalary(player) + '万円</span>' +
     "</div>" +
+    '<div class="stats-line">' + perGameStatsLine(player) + "</div>" +
     '<div class="ability-bars">' + renderAbilityBars(player) + "</div>" +
     '<div class="growth-hint">伸びしろ <span class="value">' + growthHintLabel(player) + "</span></div>";
   return card;
@@ -146,6 +161,7 @@ function renderFaCard(player) {
       '<span class="stat-chip">要求額 ' + currentPrice + '万円</span>' +
     "</div>" +
     discountLine +
+    '<div class="stats-line">' + perGameStatsLine(player) + "</div>" +
     '<div class="ability-bars">' + renderAbilityBars(player) + "</div>" +
     '<div class="growth-hint">伸びしろ <span class="value">' + growthHintLabel(player) + "</span></div>";
   return card;
