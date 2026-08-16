@@ -81,7 +81,7 @@ function renderTeamTab(container) {
   container.appendChild(heading);
 
   var rosterEl = document.createElement("div");
-  rosterEl.id = "roster";
+  rosterEl.className = "card-grid";
   container.appendChild(rosterEl);
 
   var sorted = team.roster.slice().sort(function (a, b) {
@@ -121,11 +121,95 @@ function renderStandingsTab(container) {
   container.appendChild(table);
 }
 
+// FA市場タブでのオフシーズン経過（週）。スライダーで動かして、
+// 要求額が値下がりしていく様子をその場で見られるようにする。
+var faOffseasonWeek = 0;
+
+function renderFaCard(player) {
+  var card = document.createElement("div");
+  card.className = "player-card";
+
+  var baseSalary = playerSalary(player);
+  var currentPrice = faAskingPrice(baseSalary, faOffseasonWeek);
+  var discountLine =
+    faOffseasonWeek > 0
+      ? '<div class="fa-discount-line">当初 <span class="original">' + baseSalary + "万円</span> から値下がり中</div>"
+      : "";
+
+  card.innerHTML =
+    '<div class="player-head">' +
+      '<div class="player-name">' + escapeHtml(player.name) + "</div>" +
+      '<div class="player-meta">' + escapeHtml(player.type) + "・" + player.age + "歳</div>" +
+    "</div>" +
+    '<div class="player-stats-line">' +
+      '<span class="stat-chip">総合 ' + Math.round(overall(player)) + '</span>' +
+      '<span class="stat-chip">要求額 ' + currentPrice + '万円</span>' +
+    "</div>" +
+    discountLine +
+    '<div class="ability-bars">' + renderAbilityBars(player) + "</div>" +
+    '<div class="growth-hint">伸びしろ <span class="value">' + growthHintLabel(player) + "</span></div>";
+  return card;
+}
+
+function renderFaList(listEl) {
+  listEl.innerHTML = "";
+  var sorted = league.freeAgents.slice().sort(function (a, b) {
+    return overall(b) - overall(a);
+  });
+  sorted.forEach(function (player) {
+    listEl.appendChild(renderFaCard(player));
+  });
+}
+
+// FA市場タブ: 獲得できる選手の一覧。オフシーズン経過スライダーを動かすと
+// 要求額(faAskingPrice)が下がっていくのがその場で分かる。
+// スライダーと週数表示はcreateElementで組み立てて直接参照を持つ
+// （innerHTML文字列に埋め込むとgetElementByIdでの取得に頼ることになり壊れやすいため）。
+function renderFaMarketTab(container) {
+  var controls = document.createElement("div");
+  controls.className = "fa-controls";
+
+  var label = document.createElement("label");
+  label.className = "fa-week-label";
+  label.setAttribute("for", "fa-week-slider");
+  label.innerHTML = "オフシーズン経過: ";
+
+  var weekValue = document.createElement("strong");
+  weekValue.textContent = faOffseasonWeek + "週目";
+  label.appendChild(weekValue);
+
+  var slider = document.createElement("input");
+  slider.type = "range";
+  slider.id = "fa-week-slider";
+  slider.className = "fa-week-slider";
+  slider.min = "0";
+  slider.max = "8";
+  slider.step = "2";
+  slider.value = String(faOffseasonWeek);
+
+  controls.appendChild(label);
+  controls.appendChild(slider);
+  container.appendChild(controls);
+
+  var listEl = document.createElement("div");
+  listEl.className = "card-grid";
+  container.appendChild(listEl);
+
+  renderFaList(listEl);
+
+  slider.addEventListener("input", function (e) {
+    faOffseasonWeek = parseInt(e.target.value, 10);
+    weekValue.textContent = faOffseasonWeek + "週目";
+    renderFaList(listEl);
+  });
+}
+
 // タブの定義。新しいタブを足すときはここに{id, label, render}を1つ追加するだけでよい
 // （index.html側は触らなくてよい。タブボタンも中身も、この配列から自動で作られる）。
 var TABS = [
   { id: "team", label: "自チーム", render: renderTeamTab },
-  { id: "standings", label: "順位表", render: renderStandingsTab }
+  { id: "standings", label: "順位表", render: renderStandingsTab },
+  { id: "fa-market", label: "FA市場", render: renderFaMarketTab }
 ];
 
 var currentTabId = TABS[0].id;

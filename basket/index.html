@@ -10,8 +10,8 @@
   ============================================================
   進み具合について
   ============================================================
-  今は「自チーム」「順位表」タブがあります。
-  FA市場・契約更改タブは、後で足す予定です。
+  今は「自チーム」「順位表」「FA市場」タブがあります。
+  契約更改タブは、後で足す予定です。
   タブの中身はui.jsのTABS配列で定義していて、
   新しいタブを足すときはそこに{id, label, render}を1つ追加するだけでOK。
   計算そのもの（選手生成・成長・年俸など）はgame.jsにあり、
@@ -99,8 +99,9 @@
     padding: 16px 16px 60px;
   }
 
-  /* スマホは1人1カードを縦積み。PC幅は左右の余白が目立つので2列にする */
-  #roster {
+  /* スマホは1人1カードを縦積み。PC幅は左右の余白が目立つので2列にする。
+     自チーム・FA市場など、カードを並べるタブで共通に使う。 */
+  .card-grid {
     display: grid;
     grid-template-columns: 1fr;
     gap: 12px;
@@ -111,7 +112,7 @@
       max-width: 900px;
     }
 
-    #roster {
+    .card-grid {
       grid-template-columns: repeat(2, 1fr);
     }
   }
@@ -245,6 +246,42 @@
   .standings-row--mine td:first-child {
     border-left: 4px solid var(--accent);
     padding-left: 4px;
+  }
+
+  /* FA市場: オフシーズン経過を動かすと、下の要求額バッジが値下がりする */
+  .fa-controls {
+    background: #ffffff;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 12px;
+  }
+
+  .fa-week-label {
+    display: block;
+    font-size: 0.85rem;
+    color: var(--text-sub);
+    margin-bottom: 8px;
+  }
+
+  .fa-week-label strong {
+    color: var(--accent);
+  }
+
+  .fa-week-slider {
+    width: 100%;
+    accent-color: var(--accent);
+  }
+
+  .fa-discount-line {
+    font-size: 0.75rem;
+    color: var(--text-sub);
+    margin-top: -6px;
+    margin-bottom: 12px;
+  }
+
+  .fa-discount-line .original {
+    text-decoration: line-through;
   }
 
   footer {
