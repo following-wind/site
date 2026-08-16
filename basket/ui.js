@@ -68,6 +68,12 @@ function perGameStatsLine(player) {
   return ppg + "点 " + rpg + "R " + apg + "A " + spg + "S";
 }
 
+// 契約の残り年数の表示。0以下（契約更改タブでの判断待ち）は目立たせる。
+function contractStatusLabel(player) {
+  if (player.contractYears <= 0) return '<span class="stat-chip stat-chip--pending">契約更改待ち</span>';
+  return '<span class="stat-chip">残り' + player.contractYears + '年</span>';
+}
+
 function renderPlayerCard(player) {
   var card = document.createElement("div");
   card.className = "player-card";
@@ -78,7 +84,8 @@ function renderPlayerCard(player) {
     "</div>" +
     '<div class="player-stats-line">' +
       '<span class="stat-chip">総合 ' + Math.round(overall(player)) + '</span>' +
-      '<span class="stat-chip">年俸 ' + playerSalary(player) + '万円</span>' +
+      '<span class="stat-chip">年俸 ' + player.contractSalary + '万円</span>' +
+      contractStatusLabel(player) +
     "</div>" +
     '<div class="stats-line">' + perGameStatsLine(player) + "</div>" +
     '<div class="ability-bars">' + renderAbilityBars(player) + "</div>" +
@@ -220,11 +227,126 @@ function renderFaMarketTab(container) {
   });
 }
 
+// 自チームに契約更改の対象（contractYears<=0）がまだ残っているか
+function hasPendingRenewals() {
+  return league.teams[MY_TEAM_INDEX].roster.some(function (p) { return p.contractYears <= 0; });
+}
+
+// 1人分の契約更改カード。要求額・契約年数(1年/3年)の選択・
+// 「再契約する」「解雇する」ボタンを持つ。キャップを超える契約は
+// resignBtn自体を無効化して選べないようにする。
+function renderContractCard(player) {
+  var card = document.createElement("div");
+  card.className = "player-card contract-card";
+  card.innerHTML =
+    '<div class="player-head">' +
+      '<div class="player-name">' + escapeHtml(player.name) + "</div>" +
+      '<div class="player-meta">' + escapeHtml(player.type) + "・" + player.age + "歳</div>" +
+    "</div>" +
+    '<div class="player-stats-line">' +
+      '<span class="stat-chip">総合 ' + Math.round(overall(player)) + '</span>' +
+      '<span class="stat-chip">要求額 ' + playerSalary(player) + '万円</span>' +
+    "</div>" +
+    '<div class="stats-line">' + perGameStatsLine(player) + "</div>" +
+    '<div class="ability-bars">' + renderAbilityBars(player) + "</div>";
+
+  var decision = document.createElement("div");
+  decision.className = "contract-decision";
+
+  var selectedYears = RESIGN_DURATION_OPTIONS[0];
+  var durationRow = document.createElement("div");
+  durationRow.className = "duration-choice";
+  var durationButtons = [];
+  RESIGN_DURATION_OPTIONS.forEach(function (years) {
+    var btn = document.createElement("button");
+    btn.className = "duration-btn" + (years === selectedYears ? " active" : "");
+    btn.textContent = years + "年";
+    btn.addEventListener("click", function () {
+      selectedYears = years;
+      durationButtons.forEach(function (entry) {
+        entry.btn.className = "duration-btn" + (entry.years === selectedYears ? " active" : "");
+      });
+    });
+    durationRow.appendChild(btn);
+    durationButtons.push({ years: years, btn: btn });
+  });
+  decision.appendChild(durationRow);
+
+  var askingPrice = playerSalary(player);
+  var team = league.teams[MY_TEAM_INDEX];
+  var canAfford = teamCommittedSalary(team) + askingPrice <= SALARY_CAP;
+
+  var actionsRow = document.createElement("div");
+  actionsRow.className = "contract-actions";
+
+  var resignBtn = document.createElement("button");
+  resignBtn.className = "resign-btn";
+  resignBtn.textContent = "再契約する";
+  resignBtn.disabled = !canAfford;
+  resignBtn.addEventListener("click", function () {
+    resolveContractDecision(player, "resign", selectedYears);
+  });
+  actionsRow.appendChild(resignBtn);
+
+  var releaseBtn = document.createElement("button");
+  releaseBtn.className = "release-btn";
+  releaseBtn.textContent = "解雇する";
+  releaseBtn.addEventListener("click", function () {
+    resolveContractDecision(player, "release", null);
+  });
+  actionsRow.appendChild(releaseBtn);
+
+  decision.appendChild(actionsRow);
+
+  if (!canAfford) {
+    var warn = document.createElement("p");
+    warn.className = "cap-warning";
+    warn.textContent = "キャップ超過のため契約できません";
+    decision.appendChild(warn);
+  }
+
+  card.appendChild(decision);
+  return card;
+}
+
+// 契約更改タブ: 契約が切れた（contractYears<=0）自チームの選手だけを一覧表示する。
+// AIチーム3チーム分はgame.js側のrunContractDecisions()が自動で処理済み。
+function renderContractsTab(container) {
+  var team = league.teams[MY_TEAM_INDEX];
+
+  var used = teamCommittedSalary(team);
+  var capLine = document.createElement("div");
+  capLine.className = "cap-summary";
+  capLine.innerHTML =
+    "キャップ使用中: <strong>" + used + "万円</strong> / " + SALARY_CAP + "万円" +
+    "（残り<strong>" + (SALARY_CAP - used) + "万円</strong>）";
+  container.appendChild(capLine);
+
+  var pending = team.roster.filter(function (p) { return p.contractYears <= 0; });
+
+  if (pending.length === 0) {
+    var empty = document.createElement("p");
+    empty.className = "contracts-empty";
+    empty.textContent = "契約更改の対象選手はいません。次のシーズンに進むと対象が出てくることがあります。";
+    container.appendChild(empty);
+    return;
+  }
+
+  var listEl = document.createElement("div");
+  listEl.className = "card-grid";
+  container.appendChild(listEl);
+
+  pending.forEach(function (player) {
+    listEl.appendChild(renderContractCard(player));
+  });
+}
+
 // タブの定義。新しいタブを足すときはここに{id, label, render}を1つ追加するだけでよい
 // （index.html側は触らなくてよい。タブボタンも中身も、この配列から自動で作られる）。
 var TABS = [
   { id: "team", label: "自チーム", render: renderTeamTab },
   { id: "standings", label: "順位表", render: renderStandingsTab },
+  { id: "contracts", label: "契約更改", render: renderContractsTab },
   { id: "fa-market", label: "FA市場", render: renderFaMarketTab }
 ];
 
@@ -259,20 +381,70 @@ function renderSeasonLabel() {
   document.getElementById("season-label").textContent = "シーズン" + currentSeason;
 }
 
-// 「次のシーズンへ進む」を押したときの処理。
-// advanceSeason()は成長・衰退・引退・新人加入・FAの入れ替えだけを行うので、
-// その後にrunContractDecisions()（能力不足の非再契約・キャップ超過の解雇）を
-// 挟んでから今シーズン分の試合(playSeason)を回す。解雇された選手は
-// 直前のシーズンの成績(player.stats)を持ったままFA市場に残る。
-function advanceToNextSeason() {
-  advanceSeason(league);
-  runContractDecisions(league);
+// 自チームに契約更改の対象が残っている間は「次のシーズンへ進む」を押せなくする
+// （対象を契約更改タブで解決しないと試合が始められない、という導線にするため）。
+function updateAdvanceButtonState() {
+  var btn = document.getElementById("advance-season-btn");
+  var pending = hasPendingRenewals();
+  btn.disabled = pending;
+  btn.textContent = pending ? "契約更改を終えてください" : "次のシーズンへ進む";
+}
+
+// 契約更改が全部終わった後の仕上げ。今シーズン分の試合(playSeason)を回し、
+// シーズン数を進める。
+function finishSeasonTransition() {
   resetRecords(league.teams);
   playSeason(league.teams);
   currentSeason++;
+}
+
+// 「次のシーズンへ進む」を押したときの処理。
+// advanceSeason()は成長・衰退・引退・新人加入・FAの入れ替えだけを行うので、
+// その後にrunContractDecisions()（AIチームだけの、能力不足の非再契約・
+// キャップ超過の解雇）を挟む。自チームに契約更改の対象が残っていれば、
+// 試合はまだ始めず契約更改タブに誘導する。対象が無ければそのまま
+// 試合を進める。解雇された選手は直前のシーズンの成績(player.stats)を
+// 持ったままFA市場に残る。
+function advanceToNextSeason() {
+  advanceSeason(league);
+  runContractDecisions(league, MY_TEAM_INDEX);
   faOffseasonWeek = 0; // 新しいシーズンのオフシーズンなので値下がりをリセット
 
+  if (hasPendingRenewals()) {
+    currentTabId = "contracts";
+  } else {
+    finishSeasonTransition();
+  }
+
+  renderTabBar();
   renderSeasonLabel();
+  updateAdvanceButtonState();
+  renderActiveTab();
+}
+
+// 契約更改タブでの「再契約する」「解雇する」を実際に反映する。
+// 対象が全部解決したら、そのままシーズンの試合を始める(finishSeasonTransition)。
+function resolveContractDecision(player, action, years) {
+  var team = league.teams[MY_TEAM_INDEX];
+  var idx = team.roster.indexOf(player);
+  if (idx === -1) return;
+
+  if (action === "release") {
+    team.roster.splice(idx, 1);
+    league.freeAgents.push(player);
+  } else {
+    var askingPrice = playerSalary(player);
+    if (teamCommittedSalary(team) + askingPrice > SALARY_CAP) return; // ボタン無効化済みだが念のため
+    player.contractSalary = askingPrice;
+    player.contractYears = years;
+  }
+
+  if (!hasPendingRenewals()) {
+    finishSeasonTransition();
+  }
+
+  renderSeasonLabel();
+  updateAdvanceButtonState();
   renderActiveTab();
 }
 
@@ -285,6 +457,7 @@ function init() {
   renderActiveTab();
 
   document.getElementById("advance-season-btn").addEventListener("click", advanceToNextSeason);
+  updateAdvanceButtonState();
 }
 
 init();

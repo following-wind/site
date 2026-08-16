@@ -104,8 +104,13 @@ function makePlayer(powerCoefficient) {
     defe: abilities.defe
   };
   player.potential = makePotential(abilities, 10);
+  // 初期ロースターが一斉に契約切れにならないよう、残り年数は1〜3年をランダムに割り振る
+  player.contractYears = 1 + Math.floor(Math.random() * 3);
+  player.contractSalary = playerSalary(player); // まだ成績が無いので能力ベースの額になる
   return player;
 }
+
+var ROOKIE_CONTRACT_YEARS = 2;
 
 // 新人を1人生成する（年齢19〜22歳、能力は平均58・標準偏差8）
 // ポテンシャルは初期ロースターより振れ幅を大きくする（賭けの対象にするため）
@@ -125,6 +130,9 @@ function makeRookie() {
     defe: abilities.defe
   };
   player.potential = makePotential(abilities, 18);
+  // 新人契約は一律2年（単純化。ベテランのように交渉で年数を選べたりはしない）
+  player.contractYears = ROOKIE_CONTRACT_YEARS;
+  player.contractSalary = playerSalary(player); // まだ成績が無いので能力ベースの額になる
   return player;
 }
 
@@ -201,6 +209,12 @@ function advanceSeason(league) {
     team.roster.forEach(growPlayer);
   });
   league.freeAgents.forEach(growPlayer);
+
+  // 契約の残り年数を1つ減らす。0になった選手が今季の契約更改の対象になる
+  // （対象をどう扱うかはprocessExpiredAiContracts()・契約更改タブ側で行う）
+  league.teams.forEach(function (team) {
+    team.roster.forEach(function (p) { p.contractYears--; });
+  });
 
   league.teams.forEach(function (team) {
     team.roster = team.roster.filter(function (p) { return !shouldRetireByAge(p); });
@@ -459,26 +473,44 @@ function faAskingPrice(baseSalary, weeksIntoOffseason) {
 
 // 契約更改の最小版（第6段階「AIチームの行動」の一部を先出しした）。
 // 性格・状態の判定はまだ無く、単純なルールだけ:
-//   1. 能力が閾値未満の選手は再契約しない（FAに出す）
+//   1. 契約が切れた(contractYears<=0)選手のうち、能力が閾値未満なら再契約しない（FAに出す）
 //   2. キャップを超えるチームは、年俸が高く能力の低い順（年俸÷能力が高い順）に解雇する
-// 「契約年数」という概念がまだ無いので、毎シーズン全員が契約更改の対象になる
-// という単純化をしている（本格的な契約年数の管理は契約更改タブ側で扱う）。
 // ロースター下限を割ったときのFAからの補充（3つ目のルール）はまだ実装しない。
 //
-// 閾値は46〜54で試した。48以下だと解雇がほぼ起きず(10シーズンでベテランFAが
-// 見える回数が全体の3割未満)、55以上だと再契約されない選手が多すぎて
-// ロースターが縮み続けた(最小チーム総人数が35〜14まで落ちた)。53は
-// 解雇が10シーズンで平均12人前後、チーム総人数は52→51程度でほぼ維持でき、
-// ベテランFAが見える割合が4割強になる（20試行×10シーズンで確認）。
+// 閾値は46〜54で試した（「毎シーズン全員が対象」という単純化をしていた時点での検証）。
+// 48以下だと解雇がほぼ起きず(10シーズンでベテランFAが見える回数が全体の3割未満)、
+// 55以上だと再契約されない選手が多すぎてロースターが縮み続けた
+// (最小チーム総人数が35〜14まで落ちた)。53は解雇が10シーズンで平均12人前後、
+// チーム総人数は52→51程度でほぼ維持でき、ベテランFAが見える割合が4割強になる
+// （20試行×10シーズンで確認）。契約年数を導入した後も対象を「切れた選手だけ」に
+// 絞っただけで閾値自体の意味は変わらないため、この値をそのまま使っている。
 var RESIGN_OVERALL_THRESHOLD = 53;
 
-function releaseUnderperformers(league) {
-  league.teams.forEach(function (team) {
+// 契約更改タブで選べる契約年数。AIチームの自動更改でもここからランダムに選ぶ。
+var RESIGN_DURATION_OPTIONS = [1, 3];
+
+function pickResignDuration() {
+  return pickRandom(RESIGN_DURATION_OPTIONS);
+}
+
+// 契約が切れたAIチームの選手だけを単純なルールで自動判断する。
+// myTeamIndexのチーム（プレイヤー）は対象にしない。そちらは契約更改タブで
+// 手動判断するため、contractYears<=0のまま残しておく。
+function processExpiredAiContracts(league, myTeamIndex) {
+  league.teams.forEach(function (team, index) {
+    if (index === myTeamIndex) return;
+
     var keep = [];
     team.roster.forEach(function (player) {
+      if (player.contractYears > 0) {
+        keep.push(player);
+        return;
+      }
       if (overall(player) < RESIGN_OVERALL_THRESHOLD) {
         league.freeAgents.push(player);
       } else {
+        player.contractSalary = playerSalary(player); // 直前シーズンの成績ベースの要求額で再契約
+        player.contractYears = pickResignDuration();
         keep.push(player);
       }
     });
@@ -486,13 +518,16 @@ function releaseUnderperformers(league) {
   });
 }
 
-function enforceSalaryCap(league) {
-  league.teams.forEach(function (team) {
-    var total = team.roster.reduce(function (sum, p) { return sum + playerSalary(p); }, 0);
+// キャップ(contractSalaryの合計)を超えるチームを、年俸が高く能力が低いほど
+// 優先的に解雇して収める（年俸÷能力が高い順）。myTeamIndexは対象にしない
+// （プレイヤーの契約更改タブ側で、契約時にキャップ超過を防ぐため）。
+function enforceSalaryCap(league, myTeamIndex) {
+  league.teams.forEach(function (team, index) {
+    if (index === myTeamIndex) return;
 
-    // 年俸が高く能力が低いほど優先的に解雇する（年俸÷能力が高い順）
+    var total = teamCommittedSalary(team);
     var cutOrder = team.roster.slice().sort(function (a, b) {
-      return playerSalary(b) / overall(b) - playerSalary(a) / overall(a);
+      return (b.contractSalary / overall(b)) - (a.contractSalary / overall(a));
     });
 
     var i = 0;
@@ -502,19 +537,28 @@ function enforceSalaryCap(league) {
       if (idx !== -1) {
         team.roster.splice(idx, 1);
         league.freeAgents.push(player);
-        total -= playerSalary(player);
+        total -= player.contractSalary;
       }
       i++;
     }
   });
 }
 
+// 契約中(contractYears>0)の選手のcontractSalary合計＝現在キャップに使っている額
+function teamCommittedSalary(team) {
+  return team.roster.reduce(function (sum, p) {
+    return p.contractYears > 0 ? sum + p.contractSalary : sum;
+  }, 0);
+}
+
 // シーズン終了時の契約更改をまとめて行う。advanceSeason()（成長・引退・新人）
 // とplaySeason()（試合・成績）の間で呼ぶ想定: 直前のシーズンの成績（年俸の元）
-// を使って解雇を決め、解雇された選手はFA市場に成績付きで残る。
-function runContractDecisions(league) {
-  releaseUnderperformers(league);
-  enforceSalaryCap(league);
+// を使ってAIチームの解雇・再契約を決める。myTeamIndexのチームは対象外（契約更改
+// タブで手動判断するため、contractYears<=0の選手をそのまま残す）。
+// 解雇された選手はFA市場に成績付きで残る。
+function runContractDecisions(league, myTeamIndex) {
+  processExpiredAiContracts(league, myTeamIndex);
+  enforceSalaryCap(league, myTeamIndex);
 }
 
 // 実際に生成した選手データで、年俸とキャップの感触を確認する。

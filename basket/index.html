@@ -10,8 +10,8 @@
   ============================================================
   進み具合について
   ============================================================
-  今は「自チーム」「順位表」「FA市場」タブがあります。
-  契約更改タブは、後で足す予定です。
+  「自チーム」「順位表」「契約更改」「FA市場」の4タブが揃いました
+  （指示書の第5段階のタブ構成どおり）。
   タブの中身はui.jsのTABS配列で定義していて、
   新しいタブを足すときはそこに{id, label, render}を1つ追加するだけでOK。
   計算そのもの（選手生成・成長・年俸など）はgame.jsにあり、
@@ -117,6 +117,13 @@
     opacity: 0.9;
   }
 
+  .season-btn:disabled {
+    background: var(--border);
+    color: var(--text-sub);
+    cursor: not-allowed;
+    opacity: 1;
+  }
+
   .team-name {
     font-size: 1.15rem;
     font-weight: bold;
@@ -178,6 +185,7 @@
   /* 総合力・年俸のバッジ。tips/index.htmlの.card-keysと同じ見た目に揃えた */
   .player-stats-line {
     display: flex;
+    flex-wrap: wrap;
     gap: 6px;
     margin-bottom: 12px;
   }
@@ -189,6 +197,12 @@
     font-weight: bold;
     padding: 4px 8px;
     border-radius: 4px;
+  }
+
+  /* 契約更改待ち（残り年数0以下）を目立たせる */
+  .stat-chip--pending {
+    background: var(--accent);
+    color: #ffffff;
   }
 
   /* 前シーズンの1試合平均成績。バーの直上にコンパクトに1行だけ置く */
@@ -319,6 +333,103 @@
 
   .fa-discount-line .original {
     text-decoration: line-through;
+  }
+
+  /* 契約更改タブ */
+  .cap-summary {
+    background: #ffffff;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 16px;
+    margin-bottom: 12px;
+    font-size: 0.85rem;
+    color: var(--text-sub);
+  }
+
+  .cap-summary strong {
+    color: var(--accent);
+  }
+
+  .contracts-empty {
+    color: var(--text-sub);
+    font-size: 0.875rem;
+    text-align: center;
+    padding: 40px 16px;
+  }
+
+  .contract-decision {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+
+  .duration-choice {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .duration-btn {
+    flex: 1;
+    border: 1px solid var(--border);
+    background: #ffffff;
+    color: var(--text-sub);
+    padding: 6px 0;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  .duration-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #ffffff;
+  }
+
+  .contract-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .resign-btn,
+  .release-btn {
+    flex: 1;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 0;
+    font-size: 0.85rem;
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  .resign-btn {
+    background: var(--accent);
+    color: #ffffff;
+  }
+
+  .resign-btn:disabled {
+    background: var(--border);
+    color: var(--text-sub);
+    cursor: not-allowed;
+  }
+
+  .release-btn {
+    background: #ffffff;
+    border: 1px solid var(--border);
+    color: var(--text-sub);
+  }
+
+  .release-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .cap-warning {
+    margin: 8px 0 0;
+    font-size: 0.75rem;
+    color: var(--accent);
+    text-align: center;
   }
 
   footer {
