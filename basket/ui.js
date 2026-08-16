@@ -398,6 +398,12 @@ function updateAdvanceButtonState() {
   btn.textContent = pending ? "契約更改を終えてください" : "次のシーズンへ進む";
 }
 
+// 現在の状態をlocalStorageに保存する。状態が変わる操作（シーズン進行・
+// 契約更改・やり直し）の最後に必ず呼ぶ。
+function persist() {
+  saveGame(league, currentSeason);
+}
+
 // 契約更改が全部終わった後の仕上げ。今シーズン分の試合(playSeason)を回し、
 // シーズン数を進める。
 function finishSeasonTransition() {
@@ -424,6 +430,7 @@ function advanceToNextSeason() {
     finishSeasonTransition();
   }
 
+  persist();
   renderTabBar();
   renderSeasonLabel();
   updateAdvanceButtonState();
@@ -451,20 +458,50 @@ function resolveContractDecision(player, action, years) {
     finishSeasonTransition();
   }
 
+  persist();
+  renderSeasonLabel();
+  updateAdvanceButtonState();
+  renderActiveTab();
+}
+
+// 「最初からやり直す」。保存を消し、新しいリーグを一から作り直す。
+function startNewGame() {
+  clearSave();
+
+  league = setupLeague();
+  playSeason(league.teams);
+  currentSeason = 1;
+  faOffseasonWeek = 0;
+  currentTabId = TABS[0].id;
+
+  persist();
+  renderTabBar();
   renderSeasonLabel();
   updateAdvanceButtonState();
   renderActiveTab();
 }
 
 function init() {
-  league = setupLeague();
-  playSeason(league.teams); // 順位表・年俸(前年成績ベース)に使う結果を1シーズン分作っておく
+  var saved = loadGame();
+  if (saved) {
+    league = saved.league;
+    currentSeason = saved.currentSeason;
+  } else {
+    league = setupLeague();
+    playSeason(league.teams); // 順位表・年俸(前年成績ベース)に使う結果を1シーズン分作っておく
+    persist();
+  }
 
   renderTabBar();
   renderSeasonLabel();
   renderActiveTab();
 
   document.getElementById("advance-season-btn").addEventListener("click", advanceToNextSeason);
+  document.getElementById("restart-btn").addEventListener("click", function () {
+    if (window.confirm("最初からやり直しますか？今のセーブデータは消えます。")) {
+      startNewGame();
+    }
+  });
   updateAdvanceButtonState();
 }
 

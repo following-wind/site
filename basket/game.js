@@ -818,6 +818,49 @@ function verifyPopulationStability(trials, seasons) {
   );
 }
 
+// セーブデータの読み書き（localStorage）。
+// キーは1つにまとめ、バージョン番号を入れる（DESIGN.md「保存」参照）。
+// 仕様変更で古いセーブと形が合わなくなったら、SAVE_KEYの末尾を
+// v2などに上げれば古いデータと衝突しない。
+// localStorageはブラウザにしか無いので、関数の中でだけ参照する
+// （node game.jsで動かすconsole確認では呼ばれないようにする）。
+var SAVE_KEY = "basket_save_v1";
+
+function saveGame(league, currentSeason) {
+  var payload = { key: SAVE_KEY, currentSeason: currentSeason, league: league };
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify(payload));
+  } catch (e) {
+    // 保存に失敗しても続行に支障は無い（容量超過など）ので握りつぶす
+  }
+}
+
+// 保存データを読み込む。無い/壊れている/形が合わない場合はnullを返し、
+// 呼び出し側で新規開始として扱う。
+function loadGame() {
+  try {
+    var raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return null;
+
+    var payload = JSON.parse(raw);
+    if (!payload || payload.key !== SAVE_KEY) return null;
+    if (!payload.league || !Array.isArray(payload.league.teams) || !Array.isArray(payload.league.freeAgents)) return null;
+    if (typeof payload.currentSeason !== "number") return null;
+
+    return payload;
+  } catch (e) {
+    return null; // JSONが壊れている場合もここに来る
+  }
+}
+
+function clearSave() {
+  try {
+    localStorage.removeItem(SAVE_KEY);
+  } catch (e) {
+    // 消せなくても致命的ではない
+  }
+}
+
 function main() {
   var league = setupLeague();
 

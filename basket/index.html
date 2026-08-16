@@ -451,6 +451,22 @@
   footer a:focus-visible {
     text-decoration: underline;
   }
+
+  .restart-btn {
+    background: none;
+    border: none;
+    padding: 0;
+    margin-left: 12px;
+    color: var(--accent);
+    font-size: inherit;
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  .restart-btn:hover,
+  .restart-btn:focus-visible {
+    text-decoration: underline;
+  }
 </style>
 </head>
 <body>
@@ -473,6 +489,7 @@
 
 <footer>
   <a href="../">追い風</a>
+  <button id="restart-btn" class="restart-btn">最初からやり直す</button>
 </footer>
 
 </body>
