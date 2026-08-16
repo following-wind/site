@@ -155,6 +155,9 @@ function renderStandingsTab(container) {
 // 要求額が値下がりしていく様子をその場で見られるようにする。
 var faOffseasonWeek = 0;
 
+// 1人分のFA選手カード。獲得の契約年数(1年/3年)を選び、「獲得する」で
+// 自チームに加える。シーズン中・ロースター上限・キャップ超過のいずれかに
+// 当てはまる間はボタンを無効化し、理由を表示する（優先順位はこの順）。
 function renderFaCard(player) {
   var card = document.createElement("div");
   card.className = "player-card";
@@ -177,8 +180,53 @@ function renderFaCard(player) {
     "</div>" +
     discountLine +
     '<div class="stats-line">' + perGameStatsLine(player) + "</div>" +
-    '<div class="ability-bars">' + renderAbilityBars(player) + "</div>" +
-    '<div class="growth-hint">伸びしろ <span class="value">' + growthHintLabel(player) + "</span></div>";
+    '<div class="ability-bars">' + renderAbilityBars(player) + "</div>";
+
+  var decision = document.createElement("div");
+  decision.className = "contract-decision";
+
+  var selectedYears = RESIGN_DURATION_OPTIONS[0];
+  var durationRow = document.createElement("div");
+  durationRow.className = "duration-choice";
+  var durationButtons = [];
+  RESIGN_DURATION_OPTIONS.forEach(function (years) {
+    var btn = document.createElement("button");
+    btn.className = "duration-btn" + (years === selectedYears ? " active" : "");
+    btn.textContent = years + "年";
+    btn.addEventListener("click", function () {
+      selectedYears = years;
+      durationButtons.forEach(function (entry) {
+        entry.btn.className = "duration-btn" + (entry.years === selectedYears ? " active" : "");
+      });
+    });
+    durationRow.appendChild(btn);
+    durationButtons.push({ years: years, btn: btn });
+  });
+  decision.appendChild(durationRow);
+
+  var blockReason = faSignBlockReason(player);
+
+  var actionsRow = document.createElement("div");
+  actionsRow.className = "contract-actions";
+
+  var signBtn = document.createElement("button");
+  signBtn.className = "resign-btn";
+  signBtn.textContent = "獲得する";
+  signBtn.disabled = !!blockReason;
+  signBtn.addEventListener("click", function () {
+    signFaPlayer(player, selectedYears);
+  });
+  actionsRow.appendChild(signBtn);
+  decision.appendChild(actionsRow);
+
+  if (blockReason) {
+    var warn = document.createElement("p");
+    warn.className = "cap-warning";
+    warn.textContent = blockReason;
+    decision.appendChild(warn);
+  }
+
+  card.appendChild(decision);
   return card;
 }
 
@@ -194,9 +242,18 @@ function renderFaList(listEl) {
 
 // FA市場タブ: 獲得できる選手の一覧。オフシーズン経過スライダーを動かすと
 // 要求額(faAskingPrice)が下がっていくのがその場で分かる。
+// 獲得はオフシーズン中だけできる。今どちらの状態かを先頭に出しておく
+// （シーズン中に見に来て「なぜ獲得できないか」で悩まないように）。
 // スライダーと週数表示はcreateElementで組み立てて直接参照を持つ
 // （innerHTML文字列に埋め込むとgetElementByIdでの取得に頼ることになり壊れやすいため）。
 function renderFaMarketTab(container) {
+  var statusLine = document.createElement("div");
+  statusLine.className = "cap-summary";
+  statusLine.textContent = inOffseason
+    ? "オフシーズン中: 今なら獲得できます"
+    : "シーズン中: 獲得は次のオフシーズンまでお待ちください";
+  container.appendChild(statusLine);
+
   var controls = document.createElement("div");
   controls.className = "fa-controls";
 
@@ -385,50 +442,47 @@ function renderActiveTab() {
 
 var currentSeason = 1;
 
+// シーズンとシーズンの間（オフシーズン）かどうか。この間だけ契約更改・
+// FA獲得ができる。試合中（オフシーズンでない間）はどちらもできない。
+var inOffseason = false;
+
 function renderSeasonLabel() {
   document.getElementById("season-label").textContent = "シーズン" + currentSeason;
 }
 
-// 自チームに契約更改の対象が残っている間は「次のシーズンへ進む」を押せなくする
-// （対象を契約更改タブで解決しないと試合が始められない、という導線にするため）。
+// ボタンは3つの状態を行き来する:
+//   シーズン中          → 「次のシーズンへ進む」（押すとオフシーズンに入る）
+//   オフシーズン・対象あり → 「契約更改を終えてください」（押せない）
+//   オフシーズン・対象なし → 「シーズン開始」（押すと試合が始まる）
 function updateAdvanceButtonState() {
   var btn = document.getElementById("advance-season-btn");
+  if (!inOffseason) {
+    btn.disabled = false;
+    btn.textContent = "次のシーズンへ進む";
+    return;
+  }
   var pending = hasPendingRenewals();
   btn.disabled = pending;
-  btn.textContent = pending ? "契約更改を終えてください" : "次のシーズンへ進む";
+  btn.textContent = pending ? "契約更改を終えてください" : "シーズン開始";
 }
 
 // 現在の状態をlocalStorageに保存する。状態が変わる操作（シーズン進行・
-// 契約更改・やり直し）の最後に必ず呼ぶ。
+// 契約更改・FA獲得・やり直し）の最後に必ず呼ぶ。
 function persist() {
-  saveGame(league, currentSeason);
+  saveGame(league, currentSeason, inOffseason);
 }
 
-// 契約更改が全部終わった後の仕上げ。今シーズン分の試合(playSeason)を回し、
-// シーズン数を進める。
-function finishSeasonTransition() {
-  resetRecords(league.teams);
-  playSeason(league.teams);
-  currentSeason++;
-}
-
-// 「次のシーズンへ進む」を押したときの処理。
-// advanceSeason()は成長・衰退・引退・新人加入・FAの入れ替えだけを行うので、
-// その後にrunContractDecisions()（AIチームだけの、能力不足の非再契約・
-// キャップ超過の解雇）を挟む。自チームに契約更改の対象が残っていれば、
-// 試合はまだ始めず契約更改タブに誘導する。対象が無ければそのまま
-// 試合を進める。解雇された選手は直前のシーズンの成績(player.stats)を
-// 持ったままFA市場に残る。
-function advanceToNextSeason() {
+// 「次のシーズンへ進む」（シーズン中に押したとき）。
+// advanceSeason()は成長・衰退・引退・新人加入・FAの入れ替えを行い、
+// runContractDecisions()はAIチームだけの契約更改（能力不足の非再契約・
+// キャップ超過の解雇）を行う。ここではまだ試合をしない。オフシーズンに
+// 入り、契約更改・FA獲得ができる状態にする。解雇された選手は直前の
+// シーズンの成績(player.stats)を持ったままFA市場に残る。
+function enterOffseason() {
   advanceSeason(league);
   runContractDecisions(league, MY_TEAM_INDEX);
-  faOffseasonWeek = 0; // 新しいシーズンのオフシーズンなので値下がりをリセット
-
-  if (hasPendingRenewals()) {
-    currentTabId = "contracts";
-  } else {
-    finishSeasonTransition();
-  }
+  faOffseasonWeek = 0; // 新しいオフシーズンなので値下がりをリセット
+  inOffseason = true;
 
   persist();
   renderTabBar();
@@ -437,8 +491,33 @@ function advanceToNextSeason() {
   renderActiveTab();
 }
 
+// 「シーズン開始」（オフシーズン中、契約更改の対象が無いときに押したとき）。
+// 今シーズン分の試合(playSeason)を回し、オフシーズンを終える。
+function startSeason() {
+  resetRecords(league.teams);
+  playSeason(league.teams);
+  currentSeason++;
+  inOffseason = false;
+
+  persist();
+  renderSeasonLabel();
+  updateAdvanceButtonState();
+  renderActiveTab();
+}
+
+// 「次のシーズンへ進む」ボタンの実際のクリック処理。今どちらの状態かで
+// enterOffseason/startSeasonのどちらを行うかを切り替える。
+function handleAdvanceButtonClick() {
+  if (!inOffseason) {
+    enterOffseason();
+  } else if (!hasPendingRenewals()) {
+    startSeason();
+  }
+}
+
 // 契約更改タブでの「再契約する」「解雇する」を実際に反映する。
-// 対象が全部解決したら、そのままシーズンの試合を始める(finishSeasonTransition)。
+// オフシーズン中はここでシーズンを開始しない（FA市場も見てから
+// 「シーズン開始」を押してもらう）。
 function resolveContractDecision(player, action, years) {
   var team = league.teams[MY_TEAM_INDEX];
   var idx = team.roster.indexOf(player);
@@ -454,13 +533,39 @@ function resolveContractDecision(player, action, years) {
     player.contractYears = years;
   }
 
-  if (!hasPendingRenewals()) {
-    finishSeasonTransition();
-  }
+  persist();
+  updateAdvanceButtonState();
+  renderActiveTab();
+}
+
+// FA獲得ができない理由を返す（無ければnull）。ボタンの無効化と
+// 理由表示の両方に使う。
+function faSignBlockReason(player) {
+  if (!inOffseason) return "シーズン中は獲得できません（次のオフシーズンをお待ちください）";
+  var team = league.teams[MY_TEAM_INDEX];
+  if (team.roster.length >= TEAM_ROSTER_CAP) return "ロースターが上限（" + TEAM_ROSTER_CAP + "人）です";
+  var price = faAskingPrice(playerSalary(player), faOffseasonWeek);
+  if (teamCommittedSalary(team) + price > SALARY_CAP) return "キャップ超過のため契約できません";
+  return null;
+}
+
+// FA選手を実際に獲得する。価格は「オフシーズン経過」スライダーで
+// 今表示されている額（値下がり後の額）で契約する。
+function signFaPlayer(player, years) {
+  if (faSignBlockReason(player)) return; // ボタン無効化済みだが念のため
+
+  var team = league.teams[MY_TEAM_INDEX];
+  var price = faAskingPrice(playerSalary(player), faOffseasonWeek);
+
+  var idx = league.freeAgents.indexOf(player);
+  if (idx === -1) return;
+  league.freeAgents.splice(idx, 1);
+
+  player.contractSalary = price;
+  player.contractYears = years;
+  team.roster.push(player);
 
   persist();
-  renderSeasonLabel();
-  updateAdvanceButtonState();
   renderActiveTab();
 }
 
@@ -471,6 +576,7 @@ function startNewGame() {
   league = setupLeague();
   playSeason(league.teams);
   currentSeason = 1;
+  inOffseason = false;
   faOffseasonWeek = 0;
   currentTabId = TABS[0].id;
 
@@ -486,6 +592,7 @@ function init() {
   if (saved) {
     league = saved.league;
     currentSeason = saved.currentSeason;
+    inOffseason = !!saved.inOffseason;
   } else {
     league = setupLeague();
     playSeason(league.teams); // 順位表・年俸(前年成績ベース)に使う結果を1シーズン分作っておく
@@ -496,7 +603,7 @@ function init() {
   renderSeasonLabel();
   renderActiveTab();
 
-  document.getElementById("advance-season-btn").addEventListener("click", advanceToNextSeason);
+  document.getElementById("advance-season-btn").addEventListener("click", handleAdvanceButtonClick);
   document.getElementById("restart-btn").addEventListener("click", function () {
     if (window.confirm("最初からやり直しますか？今のセーブデータは消えます。")) {
       startNewGame();

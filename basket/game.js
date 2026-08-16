@@ -826,8 +826,8 @@ function verifyPopulationStability(trials, seasons) {
 // （node game.jsで動かすconsole確認では呼ばれないようにする）。
 var SAVE_KEY = "basket_save_v1";
 
-function saveGame(league, currentSeason) {
-  var payload = { key: SAVE_KEY, currentSeason: currentSeason, league: league };
+function saveGame(league, currentSeason, inOffseason) {
+  var payload = { key: SAVE_KEY, currentSeason: currentSeason, inOffseason: !!inOffseason, league: league };
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify(payload));
   } catch (e) {
