@@ -190,8 +190,10 @@ var ROOKIES_PER_SEASON = 10;
 var TEAM_ROSTER_CAP = 13;
 
 // 1シーズン分の成長・衰退・引退・新人加入をまとめて進める。
-// この段階には契約・FA市場の仕組みがまだ無いので、FAは「誰にも取られず
-// 1シーズン過ぎたら引退する」という3つ目の引退条件どおり毎シーズン全員入れ替わる。
+// ここではまだ誰にも取られたかどうかを判定しないので、FAは「誰にも取られず
+// 1シーズン過ぎたら引退する」という3つ目の引退条件どおり毎シーズン全員入れ替わる
+// （runContractDecisions()で解雇された選手がFAに残るのは、この関数の外・
+// advanceSeason()とplaySeason()の間で行う想定）。
 // 新人は人数が少ないチームから優先的に上限13人まで割り振り、
 // 余った分だけFAに回る。
 function advanceSeason(league) {
@@ -453,6 +455,66 @@ var SALARY_CAP = 5300; // 万円
 function faAskingPrice(baseSalary, weeksIntoOffseason) {
   var discount = Math.min(0.4, weeksIntoOffseason * 0.05);
   return Math.round(baseSalary * (1 - discount));
+}
+
+// 契約更改の最小版（第6段階「AIチームの行動」の一部を先出しした）。
+// 性格・状態の判定はまだ無く、単純なルールだけ:
+//   1. 能力が閾値未満の選手は再契約しない（FAに出す）
+//   2. キャップを超えるチームは、年俸が高く能力の低い順（年俸÷能力が高い順）に解雇する
+// 「契約年数」という概念がまだ無いので、毎シーズン全員が契約更改の対象になる
+// という単純化をしている（本格的な契約年数の管理は契約更改タブ側で扱う）。
+// ロースター下限を割ったときのFAからの補充（3つ目のルール）はまだ実装しない。
+//
+// 閾値は46〜54で試した。48以下だと解雇がほぼ起きず(10シーズンでベテランFAが
+// 見える回数が全体の3割未満)、55以上だと再契約されない選手が多すぎて
+// ロースターが縮み続けた(最小チーム総人数が35〜14まで落ちた)。53は
+// 解雇が10シーズンで平均12人前後、チーム総人数は52→51程度でほぼ維持でき、
+// ベテランFAが見える割合が4割強になる（20試行×10シーズンで確認）。
+var RESIGN_OVERALL_THRESHOLD = 53;
+
+function releaseUnderperformers(league) {
+  league.teams.forEach(function (team) {
+    var keep = [];
+    team.roster.forEach(function (player) {
+      if (overall(player) < RESIGN_OVERALL_THRESHOLD) {
+        league.freeAgents.push(player);
+      } else {
+        keep.push(player);
+      }
+    });
+    team.roster = keep;
+  });
+}
+
+function enforceSalaryCap(league) {
+  league.teams.forEach(function (team) {
+    var total = team.roster.reduce(function (sum, p) { return sum + playerSalary(p); }, 0);
+
+    // 年俸が高く能力が低いほど優先的に解雇する（年俸÷能力が高い順）
+    var cutOrder = team.roster.slice().sort(function (a, b) {
+      return playerSalary(b) / overall(b) - playerSalary(a) / overall(a);
+    });
+
+    var i = 0;
+    while (total > SALARY_CAP && i < cutOrder.length) {
+      var player = cutOrder[i];
+      var idx = team.roster.indexOf(player);
+      if (idx !== -1) {
+        team.roster.splice(idx, 1);
+        league.freeAgents.push(player);
+        total -= playerSalary(player);
+      }
+      i++;
+    }
+  });
+}
+
+// シーズン終了時の契約更改をまとめて行う。advanceSeason()（成長・引退・新人）
+// とplaySeason()（試合・成績）の間で呼ぶ想定: 直前のシーズンの成績（年俸の元）
+// を使って解雇を決め、解雇された選手はFA市場に成績付きで残る。
+function runContractDecisions(league) {
+  releaseUnderperformers(league);
+  enforceSalaryCap(league);
 }
 
 // 実際に生成した選手データで、年俸とキャップの感触を確認する。

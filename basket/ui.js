@@ -261,9 +261,12 @@ function renderSeasonLabel() {
 
 // 「次のシーズンへ進む」を押したときの処理。
 // advanceSeason()は成長・衰退・引退・新人加入・FAの入れ替えだけを行うので、
-// 続けて今シーズン分の試合(playSeason)も回して順位表・個人成績・年俸を更新する。
+// その後にrunContractDecisions()（能力不足の非再契約・キャップ超過の解雇）を
+// 挟んでから今シーズン分の試合(playSeason)を回す。解雇された選手は
+// 直前のシーズンの成績(player.stats)を持ったままFA市場に残る。
 function advanceToNextSeason() {
   advanceSeason(league);
+  runContractDecisions(league);
   resetRecords(league.teams);
   playSeason(league.teams);
   currentSeason++;
