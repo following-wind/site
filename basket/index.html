@@ -87,6 +87,36 @@
     color: #ffffff;
   }
 
+  /* シーズン送り。全タブに共通する操作なのでタブの下・top-bar内に固定 */
+  .season-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 10px;
+  }
+
+  .season-label {
+    font-size: 0.8rem;
+    color: var(--text-sub);
+    white-space: nowrap;
+  }
+
+  .season-btn {
+    background: var(--accent);
+    color: #ffffff;
+    border: none;
+    border-radius: 16px;
+    padding: 7px 16px;
+    font-size: 0.8rem;
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  .season-btn:hover {
+    opacity: 0.9;
+  }
+
   .team-name {
     font-size: 1.15rem;
     font-weight: bold;
@@ -310,6 +340,10 @@
 <div class="top-bar">
   <p class="app-title">育成バスケ</p>
   <div class="tabs" id="tabs"></div>
+  <div class="season-bar">
+    <span class="season-label" id="season-label">シーズン1</span>
+    <button class="season-btn" id="advance-season-btn">次のシーズンへ進む</button>
+  </div>
 </div>
 
 <main>

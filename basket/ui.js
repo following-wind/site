@@ -237,12 +237,35 @@ function renderActiveTab() {
   tab.render(container);
 }
 
+var currentSeason = 1;
+
+function renderSeasonLabel() {
+  document.getElementById("season-label").textContent = "シーズン" + currentSeason;
+}
+
+// 「次のシーズンへ進む」を押したときの処理。
+// advanceSeason()は成長・衰退・引退・新人加入・FAの入れ替えだけを行うので、
+// 続けて今シーズン分の試合(playSeason)も回して順位表・個人成績・年俸を更新する。
+function advanceToNextSeason() {
+  advanceSeason(league);
+  resetRecords(league.teams);
+  playSeason(league.teams);
+  currentSeason++;
+  faOffseasonWeek = 0; // 新しいシーズンのオフシーズンなので値下がりをリセット
+
+  renderSeasonLabel();
+  renderActiveTab();
+}
+
 function init() {
   league = setupLeague();
   playSeason(league.teams); // 順位表・年俸(前年成績ベース)に使う結果を1シーズン分作っておく
 
   renderTabBar();
+  renderSeasonLabel();
   renderActiveTab();
+
+  document.getElementById("advance-season-btn").addEventListener("click", advanceToNextSeason);
 }
 
 init();
