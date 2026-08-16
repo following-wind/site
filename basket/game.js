@@ -484,21 +484,94 @@ function faAskingPrice(baseSalary, weeksIntoOffseason) {
 // チーム総人数は52→51程度でほぼ維持でき、ベテランFAが見える割合が4割強になる
 // （20試行×10シーズンで確認）。契約年数を導入した後も対象を「切れた選手だけ」に
 // 絞っただけで閾値自体の意味は変わらないため、この値をそのまま使っている。
+// 各性格の閾値・判断はこの値を基準にした加減で表現する（下のshouldAiResign参照）。
 var RESIGN_OVERALL_THRESHOLD = 53;
 
-// 契約更改タブで選べる契約年数。AIチームの自動更改でもここからランダムに選ぶ。
+// 契約更改タブで選べる契約年数。AIチームの自動更改でもここから選ぶ
+// （性格によって偏りを持たせる。下のpickAiResignDuration参照）。
 var RESIGN_DURATION_OPTIONS = [1, 3];
 
 function pickResignDuration() {
   return pickRandom(RESIGN_DURATION_OPTIONS);
 }
 
-// 契約が切れたAIチームの選手だけを単純なルールで自動判断する。
+// チームごとの性格（固定）。TEAM_NAMES/TEAM_POWER_COEFFICIENTSと同じ並び順。
+// プレイヤーのチーム（index 3・札幌ドリフト）はnull（AI判断の対象外）。
+// ランダム割り当てにすると、プレイヤーが相手の癖を覚えられなくなるため固定にした。
+var TEAM_PERSONALITIES = ["youth", "conservative", "spender", null];
+
+var PERSONALITY_LABELS = {
+  youth: "若手重視",
+  conservative: "堅実",
+  spender: "金遣いが荒い"
+};
+
+// 性格ごとの契約更改の判断。それぞれ「わざと残す失敗」を作るための偏り。
+//   若手重視: 25歳以下は基準を緩め、26歳以上は厳しくする
+//             → 実力のある30代を手放して即戦力を逃す（足踏みする）
+//   堅実: 要求額が能力なりの額(calcSalary(overall))を3割以上超えたら見送る
+//             → 前年の当たり年で要求額が跳ね上がった大物を取り逃す
+//   金遣いが荒い: 閾値をやや緩めるだけでなく、能力が高いほど実際に
+//             要求額の上乗せを払って再契約する（下のspenderPremium参照）
+//             → 高額・長期契約を積みがちで、翌年キャップ超過による解雇に遭いやすい
+var YOUTH_AGE_CUTOFF = 25;
+var YOUTH_THRESHOLD_ADJUST = { young: -8, old: 6 };
+var CONSERVATIVE_OVERPAY_LIMIT = 1.3;
+var SPENDER_THRESHOLD_ADJUST = -5;
+
+function shouldAiResign(player, personality) {
+  var value = overall(player);
+
+  if (personality === "youth") {
+    var threshold = RESIGN_OVERALL_THRESHOLD +
+      (player.age <= YOUTH_AGE_CUTOFF ? YOUTH_THRESHOLD_ADJUST.young : YOUTH_THRESHOLD_ADJUST.old);
+    return value >= threshold;
+  }
+
+  if (personality === "conservative") {
+    if (value < RESIGN_OVERALL_THRESHOLD) return false;
+    var fairPrice = calcSalary(value);
+    return playerSalary(player) <= fairPrice * CONSERVATIVE_OVERPAY_LIMIT;
+  }
+
+  if (personality === "spender") {
+    return value >= RESIGN_OVERALL_THRESHOLD + SPENDER_THRESHOLD_ADJUST;
+  }
+
+  return value >= RESIGN_OVERALL_THRESHOLD; // 性格未設定時の保険（現状は使われない）
+}
+
+// 金遣いが荒いチームが実際に払う上乗せ率。能力が高いほど上乗せが大きくなる
+// （「高能力に上限超えで払う」を再現する）。overall65で+30%、99で+約98%。
+function spenderPremium(player) {
+  var value = overall(player);
+  return 1.3 + Math.max(0, value - 65) * 0.02;
+}
+
+// 性格ごとの再契約額。金遣いが荒い以外は要求額どおり。
+function decideResignSalary(player, personality) {
+  var askingPrice = playerSalary(player);
+  if (personality === "spender") return Math.round(askingPrice * spenderPremium(player));
+  return askingPrice;
+}
+
+// 性格ごとの契約年数の傾向。若手重視は有望な若手を長期で囲い込み、
+// ベテランは短期で様子見。堅実は常に短期でリスクを抑える。
+// 金遣いが荒いは値の張る長期契約を積みがち（キャップ超過の一因）。
+function pickAiResignDuration(player, personality) {
+  if (personality === "youth") return player.age <= YOUTH_AGE_CUTOFF ? 3 : 1;
+  if (personality === "conservative") return 1;
+  if (personality === "spender") return 3;
+  return pickResignDuration();
+}
+
+// 契約が切れたAIチームの選手だけを、チームの性格に沿って判断する。
 // myTeamIndexのチーム（プレイヤー）は対象にしない。そちらは契約更改タブで
 // 手動判断するため、contractYears<=0のまま残しておく。
 function processExpiredAiContracts(league, myTeamIndex) {
   league.teams.forEach(function (team, index) {
     if (index === myTeamIndex) return;
+    var personality = TEAM_PERSONALITIES[index];
 
     var keep = [];
     team.roster.forEach(function (player) {
@@ -506,12 +579,12 @@ function processExpiredAiContracts(league, myTeamIndex) {
         keep.push(player);
         return;
       }
-      if (overall(player) < RESIGN_OVERALL_THRESHOLD) {
-        league.freeAgents.push(player);
-      } else {
-        player.contractSalary = playerSalary(player); // 直前シーズンの成績ベースの要求額で再契約
-        player.contractYears = pickResignDuration();
+      if (shouldAiResign(player, personality)) {
+        player.contractSalary = decideResignSalary(player, personality);
+        player.contractYears = pickAiResignDuration(player, personality);
         keep.push(player);
+      } else {
+        league.freeAgents.push(player);
       }
     });
     team.roster = keep;

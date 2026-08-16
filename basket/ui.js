@@ -1,7 +1,10 @@
 // 画面の表示だけを担当する。計算はgame.js側の関数を呼ぶだけで、
 // ここには生成・成長・年俸などのロジックを書かない。
 
-var MY_TEAM_INDEX = 0; // プレイヤーのチーム。チーム選択の仕組みはまだ無いので先頭固定
+// プレイヤーのチーム。DESIGN.md「チームと性格の対応」どおり札幌ドリフト
+// （TEAM_NAMESの4番目、戦力係数-9で最弱）に固定。弱いところから育てる
+// 前提のゲームなので、あえて最強チームにはしていない。
+var MY_TEAM_INDEX = 3;
 var league; // setupLeague()で作った、この画面の間ずっと使い回すデータ
 
 var ABILITY_ORDER = ["two", "three", "drib", "reb", "defe"];
@@ -114,7 +117,9 @@ function renderTeamTab(container) {
   });
 }
 
-// 順位表タブ: 4チームを勝ち数の多い順に並べ、自チームの行だけ強調する
+// 順位表タブ: 4チームを勝ち数の多い順に並べ、自チームの行だけ強調する。
+// 性格列はAIチームの癖を覚える手がかりなので毎回表示する。
+// 自チームの行は性格名の代わりに「あなた」と表示する。
 function renderStandingsTab(container) {
   var standings = league.teams.slice().sort(function (a, b) {
     return b.wins - a.wins;
@@ -125,11 +130,14 @@ function renderStandingsTab(container) {
   var rowsHtml = standings.map(function (team, index) {
     var games = team.wins + team.losses;
     var winRate = games > 0 ? (team.wins / games * 100).toFixed(1) : "0.0";
-    var isMine = league.teams.indexOf(team) === MY_TEAM_INDEX;
+    var teamIndex = league.teams.indexOf(team);
+    var isMine = teamIndex === MY_TEAM_INDEX;
+    var personalityLabel = isMine ? "あなた" : PERSONALITY_LABELS[TEAM_PERSONALITIES[teamIndex]];
     return (
       '<tr class="' + (isMine ? "standings-row--mine" : "") + '">' +
         "<td>" + (index + 1) + "</td>" +
         "<td>" + escapeHtml(team.name) + "</td>" +
+        "<td>" + escapeHtml(personalityLabel) + "</td>" +
         "<td>" + team.wins + "勝" + team.losses + "敗</td>" +
         "<td>" + winRate + "%</td>" +
       "</tr>"
@@ -137,7 +145,7 @@ function renderStandingsTab(container) {
   }).join("");
 
   table.innerHTML =
-    "<thead><tr><th>順位</th><th>チーム</th><th>成績</th><th>勝率</th></tr></thead>" +
+    "<thead><tr><th>順位</th><th>チーム</th><th>性格</th><th>成績</th><th>勝率</th></tr></thead>" +
     "<tbody>" + rowsHtml + "</tbody>";
 
   container.appendChild(table);
