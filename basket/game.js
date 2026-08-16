@@ -1,8 +1,8 @@
-// 育成バスケゲーム: 選手生成・シーズン消化（第1段階）
+// 育成バスケゲーム: 選手生成・シーズン消化・成長引退・個人成績・年俸/FA（第1〜4段階）
 //
-// 第1段階では「勝敗計算がまともに動くか」だけを確認する。
-// チーム力 = 全選手の5項目の単純合計（出場時間も型も考えない超シンプル版）。
-// 成長・引退・年俸・個人成績・画面は、この段階ではまだ作らない。
+// 画面はまだ作らない。console.logで確認する（main()参照）。
+// チーム力は全選手の5項目の単純合計（出場時間も型も考えない第1段階の単純版）。
+// AIチームの行動と、勝敗計算を項目別に差し替えるところ（第6・7段階）はまだ。
 //
 // 実在の選手・チーム名は使わない。名前は姓リスト×名リストの組み合わせで
 // 生成し、有名選手の姓名はリストに入れていない。
@@ -251,9 +251,13 @@ function setupLeague() {
   return { teams: teams, freeAgents: freeAgents };
 }
 
+var SEASON_GAMES = 36;
+
 // 総当たり12回戦（4チームなので、各ペアが12試合ずつ = 6ペア×12 = 72試合）
 // 1試合の勝率 = 自チーム力 / (自チーム力 + 相手チーム力)
 function playSeason(teams) {
+  teams.forEach(computeSeasonStats);
+
   for (var a = 0; a < teams.length; a++) {
     for (var b = a + 1; b < teams.length; b++) {
       var teamA = teams[a];
@@ -272,6 +276,232 @@ function playSeason(teams) {
         }
       }
     }
+  }
+}
+
+function average(roster, key) {
+  var sum = roster.reduce(function (s, p) { return s + p[key]; }, 0);
+  return sum / roster.length;
+}
+
+// チーム全体のシーズン合計（得点・リバウンド・アシスト・スティール）。
+// 出場時間や個々の選手は考えず、チーム平均能力から36試合分をまとめて出す。
+// 係数はNBA的な1試合あたりの数字感（得点100前後、リバウンド40台など）に
+// 大まかに合わせただけの目安。
+function computeTeamSeasonTotals(roster) {
+  return {
+    points: Math.round(SEASON_GAMES * (average(roster, "two") * 0.9 + average(roster, "three") * 0.7)),
+    rebounds: Math.round(SEASON_GAMES * average(roster, "reb") * 0.7),
+    assists: Math.round(SEASON_GAMES * average(roster, "drib") * 0.4),
+    steals: Math.round(SEASON_GAMES * average(roster, "defe") * 0.12)
+  };
+}
+
+// 選手ごとの出場時間の割合（チーム内で合計1になる）。
+// 総合力が高いほど出場しやすいが、乱数の幅を大きめに取ることで
+// 「能力は高いのに出場機会がない選手」も出るようにしてある。
+function computePlayingTimeShares(roster) {
+  var raw = roster.map(function (player) {
+    return Math.max(overall(player) + randNormal(0, 8), 5);
+  });
+  var total = raw.reduce(function (sum, w) { return sum + w; }, 0);
+  return raw.map(function (w) { return w / total; });
+}
+
+// 「重みの比率どおりにtotalを配る」だけの関数。得点・リバウンド・
+// アシスト・スティールの4項目で使い回す。
+function distributeByWeight(weights, total) {
+  var sum = weights.reduce(function (s, w) { return s + w; }, 0);
+  if (sum <= 0) return weights.map(function () { return 0; });
+  return weights.map(function (w) { return Math.round(total * w / sum); });
+}
+
+// 1チーム分の個人成績（シーズン合計）を計算し、各選手のstatsに書き込む。
+// 得点は2P・3P、リバウンドはリバウンド、アシストはドリブル、
+// スティールはディフェンスの能力から作る。保存するのはシーズン合計だけ。
+function computeSeasonStats(team) {
+  var roster = team.roster;
+  var totals = computeTeamSeasonTotals(roster);
+  var playingTimeShares = computePlayingTimeShares(roster);
+
+  var pointsWeights = roster.map(function (p, i) {
+    return playingTimeShares[i] * (p.two * 0.9 + p.three * 0.7);
+  });
+  var reboundWeights = roster.map(function (p, i) { return playingTimeShares[i] * p.reb; });
+  var assistWeights = roster.map(function (p, i) { return playingTimeShares[i] * p.drib; });
+  var stealWeights = roster.map(function (p, i) { return playingTimeShares[i] * p.defe; });
+
+  var points = distributeByWeight(pointsWeights, totals.points);
+  var rebounds = distributeByWeight(reboundWeights, totals.rebounds);
+  var assists = distributeByWeight(assistWeights, totals.assists);
+  var steals = distributeByWeight(stealWeights, totals.steals);
+
+  roster.forEach(function (player, i) {
+    player.stats = {
+      playingTimeShare: playingTimeShares[i],
+      points: points[i],
+      rebounds: rebounds[i],
+      assists: assists[i],
+      steals: steals[i]
+    };
+  });
+}
+
+function avgStat(list, statKey) {
+  if (list.length === 0) return 0;
+  var sum = list.reduce(function (s, p) { return s + p.stats[statKey]; }, 0);
+  return sum / list.length;
+}
+
+// 個人成績が「らしい」形になっているかを確認する。
+//   - ビッグマンは得点少なめ・リバウンド多め、シューターはその逆になるか
+//   - 出場時間が短い選手は4項目とも少なくなるか
+// 1チーム(12人)だけだと乱数でぶれて型ごとの差が埋もれるので、
+// trials個のリーグ分（各4チーム）を作ってまとめて平均を見る。
+function verifyIndividualStats(trials) {
+  console.log("\n=== 個人成績の確認（型ごとの平均・出場時間との関係、" + trials + "リーグ分で集計） ===");
+
+  var allPlayers = [];
+  for (var t = 0; t < trials; t++) {
+    var league = setupLeague();
+    playSeason(league.teams);
+    league.teams.forEach(function (team) {
+      allPlayers = allPlayers.concat(team.roster);
+    });
+  }
+
+  console.log("型ごとの平均成績（1シーズン合計、" + allPlayers.length + "人分）:");
+  PLAYER_TYPE_NAMES.forEach(function (type) {
+    var list = allPlayers.filter(function (p) { return p.type === type; });
+    if (list.length === 0) return;
+    console.log(
+      "  " + type + "（" + list.length + "人）: " +
+      "得点 " + avgStat(list, "points").toFixed(1) +
+      " / リバウンド " + avgStat(list, "rebounds").toFixed(1) +
+      " / アシスト " + avgStat(list, "assists").toFixed(1) +
+      " / スティール " + avgStat(list, "steals").toFixed(1)
+    );
+  });
+
+  var sortedByPlayingTime = allPlayers.slice().sort(function (a, b) {
+    return a.stats.playingTimeShare - b.stats.playingTimeShare;
+  });
+  var quarter = Math.floor(sortedByPlayingTime.length / 4);
+  var low = sortedByPlayingTime.slice(0, quarter);
+  var high = sortedByPlayingTime.slice(sortedByPlayingTime.length - quarter);
+
+  console.log("\n出場時間による比較（下位25% vs 上位25%、4項目合計の平均）:");
+  [["出場時間 少なめ", low], ["出場時間 多め", high]].forEach(function (pair) {
+    var label = pair[0];
+    var list = pair[1];
+    var totalAvg = avgStat(list, "points") + avgStat(list, "rebounds") + avgStat(list, "assists") + avgStat(list, "steals");
+    console.log("  " + label + "（" + list.length + "人）: 合計平均 " + totalAvg.toFixed(1));
+  });
+}
+
+// 年俸カーブ。線形にせず、能力10上昇で約2倍になる加速カーブにする。
+// 「そこそこを多く」と「主力1人に賭ける」が同じ価値にならないようにするため。
+var SALARY_BASE = 80; // 万円
+
+function calcSalary(overallValue) {
+  return Math.round(SALARY_BASE * Math.pow(2, (overallValue - 50) / 10));
+}
+
+// 前年の成績から「求める額の根拠になる能力っぽい数字」を作るための重み。
+// 得点・リバウンド・アシストよりスティールを重めにしてあるのは、
+// 数が少ない分1つの価値を大きくする程度の理由で、厳密な根拠はない。
+var PERFORMANCE_WEIGHTS = { points: 1.0, rebounds: 1.2, assists: 1.5, steals: 3.0 };
+
+function performanceIndex(stats) {
+  return (
+    stats.points * PERFORMANCE_WEIGHTS.points +
+    stats.rebounds * PERFORMANCE_WEIGHTS.rebounds +
+    stats.assists * PERFORMANCE_WEIGHTS.assists +
+    stats.steals * PERFORMANCE_WEIGHTS.steals
+  );
+}
+
+// performanceIndexは能力値と単位が違うので、40リーグ分のシミュレーション結果から
+// 平均・標準偏差を測り、能力overallと同じ分布になるようz-score変換する。
+// （型のバランスや人数を変えたら、この2つの定数は計算し直しが必要）
+var PERFORMANCE_CALIBRATION = { meanOverall: 66.7, sdOverall: 10.8, meanPerf: 679.6, sdPerf: 199.7 };
+
+// 要求額は能力そのものではなく前年の成績で決まる。
+// 出場時間の運で成績が能力より良く/悪く出た選手は、そのまま
+// 「実力より高い/安い」要求額になる（前年の成績が無い新人は能力をそのまま使う）。
+function perceivedOverall(player) {
+  if (!player.stats) return overall(player);
+  var z = (performanceIndex(player.stats) - PERFORMANCE_CALIBRATION.meanPerf) / PERFORMANCE_CALIBRATION.sdPerf;
+  return clamp(Math.round(PERFORMANCE_CALIBRATION.meanOverall + z * PERFORMANCE_CALIBRATION.sdOverall), 40, 99);
+}
+
+function playerSalary(player) {
+  return calcSalary(perceivedOverall(player));
+}
+
+// サラリーキャップ（1チームあたり）。
+// 指示書の4,600万円は「50人を1つのプール」とみなした試算値だったが、
+// 実際は4チームへのチーム単位の補充（戦力係数・上限13人など）で
+// ロースターの年俸構成が変わり、4,600万円のままだと全選手を要求額どおりに
+// 契約した場合の適合率が約66%まで下がった。5,300万円に調整し、約84%まで戻した
+// （下のverifySalaryCapで150チーム分試行して確認）。
+var SALARY_CAP = 5300; // 万円
+
+// オフシーズンが進むほどFAの要求額が下がる。
+// 「もう少し待てば安く取れるかもしれない」という駆け引きを作るためのもの。
+// weeksIntoOffseasonは0スタートで、最大40%まで値下がりする。
+function faAskingPrice(baseSalary, weeksIntoOffseason) {
+  var discount = Math.min(0.4, weeksIntoOffseason * 0.05);
+  return Math.round(baseSalary * (1 - discount));
+}
+
+// 実際に生成した選手データで、年俸とキャップの感触を確認する。
+// 「全選手をそれぞれの要求額どおりに契約したら」という厳しめの前提での
+// 適合率なので、実際のプレイでは選手を選んで契約する分もっと収まりやすくなるはず。
+function verifySalaryCap(trials) {
+  console.log("\n=== 年俸・サラリーキャップの確認（" + trials + "チーム分） ===");
+
+  var fitCount = 0;
+  var teamTotals = [];
+  var allSalaries = [];
+
+  for (var t = 0; t < trials; t++) {
+    var league = setupLeague();
+    playSeason(league.teams);
+    league.teams.forEach(function (team) {
+      var total = 0;
+      team.roster.forEach(function (player) {
+        var salary = playerSalary(player);
+        allSalaries.push(salary);
+        total += salary;
+      });
+      teamTotals.push(total);
+      if (total <= SALARY_CAP) fitCount++;
+    });
+  }
+
+  allSalaries.sort(function (a, b) { return a - b; });
+  teamTotals.sort(function (a, b) { return a - b; });
+
+  console.log(
+    "個人年俸: 中央値 " + allSalaries[Math.floor(allSalaries.length / 2)] +
+    "万円 / 最高額 " + allSalaries[allSalaries.length - 1] + "万円"
+  );
+  console.log(
+    "チーム総年俸: 中央値 " + teamTotals[Math.floor(teamTotals.length / 2)] +
+    "万円 / 最高額 " + teamTotals[teamTotals.length - 1] + "万円"
+  );
+  console.log(
+    "キャップ（" + SALARY_CAP + "万円）に収まるチームの割合: " +
+    fitCount + "/" + teamTotals.length +
+    "（" + (fitCount / teamTotals.length * 100).toFixed(1) + "%）"
+  );
+}
+
+function verifyFaDepreciation() {
+  console.log("\n=== FAの値下がりの例（当初の要求額500万円の選手） ===");
+  for (var week = 0; week <= 8; week += 2) {
+    console.log("  オフシーズン" + week + "週目: " + faAskingPrice(500, week) + "万円");
   }
 }
 
@@ -362,6 +592,9 @@ function main() {
   });
 
   verifyPowerCoefficient(league, 10);
+  verifyIndividualStats(30);
+  verifySalaryCap(150);
+  verifyFaDepreciation();
 
   var totalWins = league.teams.reduce(function (sum, team) { return sum + team.wins; }, 0);
   console.log("\n直近シーズンの勝ち数合計: " + totalWins + "（72になっていればOK）");
