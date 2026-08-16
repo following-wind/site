@@ -498,6 +498,62 @@ function verifySalaryCap(trials) {
   );
 }
 
+// 「要求額は前年の成績で決まる」の核心である、能力どおりの年俸(trueSalary)と
+// 実際の要求額(demandSalary)のズレを確認する。z-score変換は分布の形を能力overall
+// に合わせているだけで、ズレそのものを消す処理ではないはずだが、消えていないか、
+// 逆に能力と無関係なほど暴れていないかを両方チェックする。
+function verifySalaryDivergence(trials) {
+  console.log("\n=== 要求額と能力どおりの年俸のズレを確認（" + trials + "チーム分） ===");
+
+  var players = [];
+  for (var t = 0; t < trials; t++) {
+    var league = setupLeague();
+    playSeason(league.teams);
+    league.teams.forEach(function (team) {
+      players = players.concat(team.roster);
+    });
+  }
+
+  var ratios = players.map(function (p) {
+    var trueSalary = calcSalary(overall(p));
+    var demandSalary = playerSalary(p);
+    return { player: p, trueSalary: trueSalary, demandSalary: demandSalary, ratio: (demandSalary - trueSalary) / trueSalary };
+  });
+
+  var over20 = ratios.filter(function (r) { return r.ratio > 0.2; }).length;
+  var under20 = ratios.filter(function (r) { return r.ratio < -0.2; }).length;
+  var within10 = ratios.filter(function (r) { return Math.abs(r.ratio) < 0.1; }).length;
+
+  console.log(
+    "能力どおりの年俸から+20%を超えて割高: " + over20 + "/" + players.length +
+    "（" + (over20 / players.length * 100).toFixed(1) + "%）"
+  );
+  console.log(
+    "能力どおりの年俸から-20%を超えて割安: " + under20 + "/" + players.length +
+    "（" + (under20 / players.length * 100).toFixed(1) + "%）"
+  );
+  console.log(
+    "ほぼ実力どおり（±10%以内）: " + within10 + "/" + players.length +
+    "（" + (within10 / players.length * 100).toFixed(1) + "%）"
+  );
+
+  var sortedByRatio = ratios.slice().sort(function (a, b) { return b.ratio - a.ratio; });
+  console.log("\n割高の例（能力の割に要求額が高い上位3人）:");
+  sortedByRatio.slice(0, 3).forEach(function (r) {
+    console.log(
+      "  " + r.player.name + "（" + r.player.type + "、能力" + overall(r.player).toFixed(1) + "）: " +
+      "本来" + r.trueSalary + "万円 → 要求" + r.demandSalary + "万円（" + (r.ratio * 100).toFixed(0) + "%）"
+    );
+  });
+  console.log("割安の例（能力の割に要求額が安い上位3人）:");
+  sortedByRatio.slice(-3).reverse().forEach(function (r) {
+    console.log(
+      "  " + r.player.name + "（" + r.player.type + "、能力" + overall(r.player).toFixed(1) + "）: " +
+      "本来" + r.trueSalary + "万円 → 要求" + r.demandSalary + "万円（" + (r.ratio * 100).toFixed(0) + "%）"
+    );
+  });
+}
+
 function verifyFaDepreciation() {
   console.log("\n=== FAの値下がりの例（当初の要求額500万円の選手） ===");
   for (var week = 0; week <= 8; week += 2) {
@@ -594,6 +650,7 @@ function main() {
   verifyPowerCoefficient(league, 10);
   verifyIndividualStats(30);
   verifySalaryCap(150);
+  verifySalaryDivergence(40);
   verifyFaDepreciation();
 
   var totalWins = league.teams.reduce(function (sum, team) { return sum + team.wins; }, 0);
