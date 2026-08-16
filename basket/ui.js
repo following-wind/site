@@ -29,16 +29,22 @@ function growthHintLabel(player) {
   return "↓";
 }
 
+// バーの最大高さ(px)。能力40はここが0px、99はここが満タンになる。
+// 以前は%指定でネストしたflexの中に置いていたため、ラベル分だけ実際の
+// 高さが目減りして差が見えにくかった。pxで直接計算する方式に変えた。
+var BAR_MAX_HEIGHT = 60;
+
 function renderAbilityBars(player) {
   var top = topAbilityKey(player);
   var html = "";
   ABILITY_ORDER.forEach(function (key) {
     var value = player[key];
-    var heightPercent = Math.round(((value - 40) / (99 - 40)) * 100);
+    var ratio = (value - 40) / (99 - 40); // 40を底、99を天井にする
+    var heightPx = Math.round(ratio * BAR_MAX_HEIGHT);
     var fillClass = "bar-fill" + (key === top ? " bar-fill--top" : "");
     html +=
       '<div class="bar-col">' +
-        '<div class="bar-track"><div class="' + fillClass + '" style="height:' + heightPercent + '%"></div></div>' +
+        '<div class="bar-track"><div class="' + fillClass + '" style="height:' + heightPx + 'px"></div></div>' +
         '<div class="bar-label">' + ABILITY_LABELS[key] + "</div>" +
       "</div>";
   });

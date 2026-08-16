@@ -67,12 +67,27 @@
     padding: 16px 16px 60px;
   }
 
-  /* 選手カード（スマホ前提。1人1カードで縦に積む） */
+  /* スマホは1人1カードを縦積み。PC幅は左右の余白が目立つので2列にする */
+  #roster {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  @media (min-width: 640px) {
+    main {
+      max-width: 900px;
+    }
+
+    #roster {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+
   .player-card {
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 14px 16px;
-    margin-bottom: 12px;
     background: #ffffff;
   }
 
@@ -102,7 +117,6 @@
     display: flex;
     align-items: flex-end;
     gap: 8px;
-    height: 56px;
   }
 
   .bar-col {
@@ -110,13 +124,15 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    height: 100%;
   }
 
+  /* 高さは固定60px。バー自体の高さ(px)はui.js側で40〜99を0〜60pxに
+     直接計算して埋め込む（%指定だとネストしたflexの中でラベル分
+     目減りして差が見えにくかったため、pxの実寸指定にした） */
   .bar-track {
-    flex: 1;
     width: 100%;
     max-width: 26px;
+    height: 60px;
     display: flex;
     align-items: flex-end;
   }
