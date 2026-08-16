@@ -10,8 +10,10 @@
   ============================================================
   進み具合について
   ============================================================
-  今はまだ「自チーム」タブしかありません。
-  順位表・FA市場・契約更改タブは、後で足す予定です。
+  今は「自チーム」「順位表」タブがあります。
+  FA市場・契約更改タブは、後で足す予定です。
+  タブの中身はui.jsのTABS配列で定義していて、
+  新しいタブを足すときはそこに{id, label, render}を1つ追加するだけでOK。
   計算そのもの（選手生成・成長・年俸など）はgame.jsにあり、
   ここ（index.html / ui.js）は画面表示だけを担当します。
   ============================================================
@@ -44,21 +46,51 @@
     z-index: 10;
     background: #ffffff;
     border-bottom: 1px solid var(--border);
-    padding: 16px 20px;
+    padding: 12px 20px;
     text-align: center;
   }
 
-  .tab-label {
+  .app-title {
     font-size: 0.75rem;
     letter-spacing: 0.1em;
     color: var(--text-sub);
-    margin: 0 0 2px;
+    margin: 0 0 10px;
+  }
+
+  /* タブ切り替えボタン。tips/index.htmlの.tab-btnと同じ見た目に揃えた */
+  .tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+  }
+
+  .tab-btn {
+    border: 1px solid var(--border);
+    background: #ffffff;
+    color: var(--text-sub);
+    padding: 6px 14px;
+    border-radius: 16px;
+    font-size: 0.85rem;
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  .tab-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .tab-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #ffffff;
   }
 
   .team-name {
     font-size: 1.15rem;
     font-weight: bold;
-    margin: 0;
+    margin: 0 0 12px;
   }
 
   main {
@@ -110,6 +142,22 @@
     font-size: 0.8rem;
     color: var(--text-sub);
     white-space: nowrap;
+  }
+
+  /* 総合力・年俸のバッジ。tips/index.htmlの.card-keysと同じ見た目に揃えた */
+  .player-stats-line {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+
+  .stat-chip {
+    background: var(--accent-pale);
+    color: var(--accent);
+    font-size: 0.75rem;
+    font-weight: bold;
+    padding: 4px 8px;
+    border-radius: 4px;
   }
 
   /* 能力5項目。数字は並べず、5本の縦バーで見せる */
@@ -168,6 +216,37 @@
     color: var(--accent);
   }
 
+  /* 順位表。4チームだけなので表を横に並べても崩れない */
+  .standings {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+  }
+
+  .standings th,
+  .standings td {
+    padding: 10px 8px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .standings th {
+    font-size: 0.75rem;
+    font-weight: normal;
+    color: var(--text-sub);
+  }
+
+  /* 自チームの行だけ強調する */
+  .standings-row--mine {
+    background: var(--accent-pale);
+    font-weight: bold;
+  }
+
+  .standings-row--mine td:first-child {
+    border-left: 4px solid var(--accent);
+    padding-left: 4px;
+  }
+
   footer {
     max-width: 480px;
     margin: 2rem auto 0;
@@ -192,12 +271,12 @@
 <body>
 
 <div class="top-bar">
-  <p class="tab-label">自チーム</p>
-  <p class="team-name" id="team-name">読み込み中…</p>
+  <p class="app-title">育成バスケ</p>
+  <div class="tabs" id="tabs"></div>
 </div>
 
 <main>
-  <div id="roster"></div>
+  <div id="tab-content"></div>
 </main>
 
 <script src="game.js"></script>
