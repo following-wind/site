@@ -265,6 +265,13 @@ function makePlayer(powerCoefficient) {
 
 var ROOKIE_CONTRACT_YEARS = 2;
 
+// 新人のポテンシャル生成幅。追加段階A-4の検証で、旧値18だと
+// ポテンシャルの余地（潜在能力-現在能力、5項目平均）が中央値13.4しかなく、
+// 経験値による成長速度の差が「余地25以上」でないとほぼ出ないことが
+// 分かった。ドラフト実装を見据え、新人の3割程度が余地25以上になるよう
+// 34に広げた（3000人のシミュレーションで余地25以上29.4%を確認）。
+var ROOKIE_POTENTIAL_SPREAD = 34;
+
 // 新人を1人生成する（年齢19〜22歳、能力は平均58・標準偏差8）
 // ポテンシャルは初期ロースターより振れ幅を大きくする（賭けの対象にするため）
 function makeRookie() {
@@ -283,7 +290,7 @@ function makeRookie() {
     reb: abilities.reb,
     defe: abilities.defe
   };
-  player.potential = makePotential(abilities, 18);
+  player.potential = makePotential(abilities, ROOKIE_POTENTIAL_SPREAD);
   // 新人契約は一律2年（単純化。ベテランのように交渉で年数を選べたりはしない）
   player.contractYears = ROOKIE_CONTRACT_YEARS;
   player.contractSalary = playerSalary(player); // まだ成績が無いので能力ベースの額になる
