@@ -29,7 +29,7 @@ function topAbilityKey(player) {
 // 伸びしろの表示。26歳以下は隠して「?」、27歳を過ぎたら
 // 「止」か「↓」で衰えの向きだけ見せる（数字そのものは出さない）。
 function growthHintLabel(player) {
-  var bracket = ageBracket(player.age);
+  var bracket = ageBracket(player);
   if (bracket === "growth") return "?";
   if (bracket === "plateau") return "止";
   return "↓";

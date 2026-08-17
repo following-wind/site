@@ -259,6 +259,7 @@ function makePlayer(powerCoefficient) {
   player.contractYears = 1 + Math.floor(Math.random() * 3);
   player.contractSalary = playerSalary(player); // まだ成績が無いので能力ベースの額になる
   player.rotation = { position: null, minutes: 0 }; // 出場時間配分（A-2）。毎シーズンadvanceSeason()でリセットされる
+  player.experience = 0; // 出場時間で積む経験値（A-4）。ポテンシャル(上限)とは別物
   return player;
 }
 
@@ -287,6 +288,7 @@ function makeRookie() {
   player.contractYears = ROOKIE_CONTRACT_YEARS;
   player.contractSalary = playerSalary(player); // まだ成績が無いので能力ベースの額になる
   player.rotation = { position: null, minutes: 0 };
+  player.experience = 0;
   return player;
 }
 
@@ -294,9 +296,54 @@ function overall(player) {
   return (player.two + player.three + player.drib + player.reb + player.defe) / 5;
 }
 
-function ageBracket(age) {
-  if (age <= 26) return "growth";
-  if (age <= 29) return "plateau";
+// 経験値（追加段階A-4）。出場時間=経験値、という前提で、若いうちに
+// 多くのミニッツを得た選手ほど成長が速く、ピーク（衰え始めるまでの
+// 期間）が長くなる。ポテンシャル（上限）とは役割を分けており、
+// 経験値は上限そのものは変えない（到達速度とピーク維持だけに効く）。
+var EXPERIENCE_AGE_CAP = 35; // これ以上は経験値が増えない
+
+// 19歳で最大(1.0)、35歳で0になるように直線的に減っていく重み。
+// 「弱いうちから使うほど効く」を表すため、能力の高さは見ない。
+function experienceGainWeight(age) {
+  if (age >= EXPERIENCE_AGE_CAP) return 0;
+  return clamp((EXPERIENCE_AGE_CAP - age) / (EXPERIENCE_AGE_CAP - 19), 0, 1);
+}
+
+// そのシーズンの出場時間(player.rotation.minutes)から経験値を積む。
+// playSeason()の中、そのシーズンの試合が終わった後に呼ぶ想定。
+var EXPERIENCE_RATE = 1.0;
+
+function accumulateExperience(player) {
+  var weight = experienceGainWeight(player.age);
+  if (weight <= 0) return;
+  var minutesFactor = player.rotation.minutes / POSITION_MINUTES_CAP; // 0〜1
+  player.experience += minutesFactor * weight * EXPERIENCE_RATE;
+}
+
+// 経験値による成長ブースト（成長期のみ）。経験値1につき+8%、最大+60%。
+var EXPERIENCE_GROWTH_BONUS_SCALE = 0.08;
+var EXPERIENCE_GROWTH_BONUS_CAP = 0.6;
+
+function experienceGrowthMultiplier(player) {
+  return 1 + Math.min(EXPERIENCE_GROWTH_BONUS_CAP, player.experience * EXPERIENCE_GROWTH_BONUS_SCALE);
+}
+
+// 経験値による衰え開始年齢の後ろ倒し。経験値1につき+0.6歳、最大+5歳
+// （素の衰え開始年齢は30歳なので、最大で35歳まで延びる）。
+var EXPERIENCE_PEAK_EXTENSION_SCALE = 0.6;
+var EXPERIENCE_PEAK_EXTENSION_CAP = 5;
+var BASE_DECLINE_START_AGE = 30;
+
+function declineStartAge(player) {
+  return BASE_DECLINE_START_AGE + Math.min(EXPERIENCE_PEAK_EXTENSION_CAP, player.experience * EXPERIENCE_PEAK_EXTENSION_SCALE);
+}
+
+// 成長期(26歳まで)はどの選手も同じ。27歳以降は経験値に応じて
+// 衰え始める年齢(declineStartAge)が後ろ倒しになるため、
+// 「ほぼ横ばい」の期間が選手ごとに変わる。
+function ageBracket(player) {
+  if (player.age <= 26) return "growth";
+  if (player.age < declineStartAge(player)) return "plateau";
   return "decline";
 }
 
@@ -314,15 +361,16 @@ var DECLINE_RATE = { two: 0.6, three: 0.6, drib: 2.2, reb: 1.3, defe: 2.2 };
 
 // 1シーズン分の成長・衰退を1人に適用し、年齢を1つ上げる
 function growPlayer(player) {
-  var bracket = ageBracket(player.age);
+  var bracket = ageBracket(player);
+  var declineAge = declineStartAge(player);
   ["two", "three", "drib", "reb", "defe"].forEach(function (key) {
     var delta;
     if (bracket === "growth") {
-      delta = randNormal(2.5, 1.5) * growthMultiplier(key, player.type);
+      delta = randNormal(2.5, 1.5) * growthMultiplier(key, player.type) * experienceGrowthMultiplier(player);
     } else if (bracket === "plateau") {
       delta = randNormal(-0.6, 1.0);
     } else {
-      var yearsInDecline = player.age - 29;
+      var yearsInDecline = player.age - (declineAge - 1);
       delta = -(DECLINE_RATE[key] + yearsInDecline * 0.12) + randNormal(0, 1.0);
     }
     var next = Math.min(player[key] + delta, player.potential[key]);
@@ -568,6 +616,9 @@ var THREE_POINT_VARIANCE_SCALE = 0.18;
 function playSeason(teams) {
   teams.forEach(ensureCompleteRotation);
   teams.forEach(computeSeasonStats);
+  // このシーズンの出場時間を経験値として積む（A-4）。翌シーズンの
+  // advanceSeason()でのgrowPlayer()に反映される。
+  teams.forEach(function (team) { team.roster.forEach(accumulateExperience); });
 
   for (var a = 0; a < teams.length; a++) {
     for (var b = a + 1; b < teams.length; b++) {
