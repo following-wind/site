@@ -456,21 +456,133 @@ function setupLeague() {
 
 var SEASON_GAMES = 36;
 
+// おまかせ配分(autoFillRotation)と違い、既に配分済み（出場時間>0）の
+// 選手には触れず、空いているポジション（0分のまま）だけを、まだ配分の
+// 無い選手で埋める。空いたポジションごとに一番能力の高い未配置選手を
+// 割り当て、そのポジションを丸ごと任せる（48分）。
+function fillMissingRotation(roster) {
+  var missingPositions = POSITION_ORDER.filter(function (position) {
+    return positionMinutesUsed(roster, position) === 0;
+  });
+  if (missingPositions.length === 0) return;
+
+  var available = roster
+    .filter(function (p) { return !p.rotation.position || p.rotation.minutes === 0; })
+    .sort(function (a, b) { return overall(b) - overall(a); });
+
+  var positionsByScarcity = missingPositions.slice().sort(function (a, b) {
+    var countA = available.filter(function (p) { return p.positions.indexOf(a) !== -1; }).length;
+    var countB = available.filter(function (p) { return p.positions.indexOf(b) !== -1; }).length;
+    return countA - countB;
+  });
+
+  var used = [];
+  positionsByScarcity.forEach(function (position) {
+    var candidate = available.filter(function (p) {
+      return used.indexOf(p) === -1 && p.positions.indexOf(position) !== -1;
+    })[0];
+    // 適性のある未配置選手がいなければ、能力最高の未配置選手を専門外で割り当てる
+    // （誰も出さないよりまし。専門外ペナルティはそのまま働く）
+    if (!candidate) candidate = available.filter(function (p) { return used.indexOf(p) === -1; })[0];
+    if (!candidate) return;
+
+    candidate.rotation.position = position;
+    candidate.rotation.minutes = POSITION_MINUTES_CAP;
+    used.push(candidate);
+  });
+}
+
+// チームに出場時間の欠け（どこかのポジションが0分）があれば埋める。
+// 何も決めていない（AIチーム、または一度もタブを開いていないプレイヤー）
+// 場合はおまかせ配分でまとめて質の良い配分を作り、一部だけ手動で決めて
+// いる場合は、その決定を壊さずfillMissingRotationで空きだけ埋める。
+function ensureCompleteRotation(team) {
+  var totalMinutes = team.roster.reduce(function (sum, p) { return sum + p.rotation.minutes; }, 0);
+  if (totalMinutes === 0) {
+    autoFillRotation(team.roster);
+  } else {
+    fillMissingRotation(team.roster);
+  }
+}
+
+// チームの攻撃力・守備力・リバウンド力・3P依存度を出場時間から計算する
+// （第7段階）。
+//   攻撃力: 出場時間が多い上位5人の、2P・3P・ドリブルの加重平均
+//   守備力: 出場する全選手のディフェンスの加重平均（穴が1人いると崩れる）
+//   リバウンド力: 出場する全選手のリバウンドの合計（出場時間の割合で按分）
+// 専門外のポジションで出場している選手はpositionPenaltyMultiplier分だけ
+// 効果が下がる。
+function computeTeamRating(roster) {
+  var playing = roster.filter(function (p) { return p.rotation.minutes > 0; });
+  if (playing.length === 0) playing = roster; // 全員0分という異常系への保険
+
+  var top5 = playing.slice()
+    .sort(function (a, b) { return b.rotation.minutes - a.rotation.minutes; })
+    .slice(0, 5);
+
+  var offenseNumerator = 0, offenseWeight = 0;
+  top5.forEach(function (p) {
+    var penalty = playerPositionPenalty(p);
+    var scoringAbility = ((p.two + p.three + p.drib) / 3) * penalty;
+    offenseNumerator += scoringAbility * p.rotation.minutes;
+    offenseWeight += p.rotation.minutes;
+  });
+  var offense = offenseWeight > 0 ? offenseNumerator / offenseWeight : 50;
+
+  var defenseNumerator = 0, defenseWeight = 0;
+  playing.forEach(function (p) {
+    defenseNumerator += p.defe * playerPositionPenalty(p) * p.rotation.minutes;
+    defenseWeight += p.rotation.minutes;
+  });
+  var defense = defenseWeight > 0 ? defenseNumerator / defenseWeight : 50;
+
+  var reboundSum = 0;
+  playing.forEach(function (p) {
+    reboundSum += p.reb * playerPositionPenalty(p) * (p.rotation.minutes / POSITION_MINUTES_CAP);
+  });
+  var rebound = reboundSum / 5; // 5ポジション分をならして能力と同じスケールに戻す
+
+  var totalTwo = 0, totalThree = 0;
+  top5.forEach(function (p) { totalTwo += p.two; totalThree += p.three; });
+  var threeReliance = (totalTwo + totalThree) > 0 ? totalThree / (totalTwo + totalThree) : 0.3;
+
+  return { offense: offense, defense: defense, rebound: rebound, threeReliance: threeReliance };
+}
+
+// 攻撃力・守備力・リバウンド力を1つの総合値にまとめる重み。
+var TEAM_RATING_WEIGHTS = { offense: 0.45, defense: 0.35, rebound: 0.20 };
+
+function overallRating(rating) {
+  return rating.offense * TEAM_RATING_WEIGHTS.offense +
+    rating.defense * TEAM_RATING_WEIGHTS.defense +
+    rating.rebound * TEAM_RATING_WEIGHTS.rebound;
+}
+
+// 3Pに寄せたチームほど1試合ごとの勝率のブレを大きくする係数。
+// 両チームの3P依存度の平均に比例してノイズの標準偏差を決める。
+var THREE_POINT_VARIANCE_SCALE = 0.18;
+
 // 総当たり12回戦（4チームなので、各ペアが12試合ずつ = 6ペア×12 = 72試合）
-// 1試合の勝率 = 自チーム力 / (自チーム力 + 相手チーム力)
+// 1試合の勝率 = 自チーム総合値 / (自チーム総合値 + 相手チーム総合値)に、
+// 3P依存度によるブレを乗せたもの。
 function playSeason(teams) {
+  teams.forEach(ensureCompleteRotation);
   teams.forEach(computeSeasonStats);
 
   for (var a = 0; a < teams.length; a++) {
     for (var b = a + 1; b < teams.length; b++) {
       var teamA = teams[a];
       var teamB = teams[b];
-      var powerA = teamPower(teamA.roster);
-      var powerB = teamPower(teamB.roster);
-      var winRateA = powerA / (powerA + powerB);
+      var ratingA = computeTeamRating(teamA.roster);
+      var ratingB = computeTeamRating(teamB.roster);
+      var scoreA = overallRating(ratingA);
+      var scoreB = overallRating(ratingB);
+      var baseWinRateA = scoreA / (scoreA + scoreB);
+      var varianceScale = THREE_POINT_VARIANCE_SCALE * (ratingA.threeReliance + ratingB.threeReliance) / 2;
 
       for (var game = 0; game < 12; game++) {
-        if (Math.random() < winRateA) {
+        var gameWinRateA = clamp(baseWinRateA + randNormal(0, varianceScale), 0.02, 0.98);
+        if (Math.random() < gameWinRateA) {
           teamA.wins++;
           teamB.losses++;
         } else {
@@ -487,28 +599,48 @@ function average(roster, key) {
   return sum / roster.length;
 }
 
+// 出場時間(player.rotation.minutes)で重み付けした平均。誰も出場時間が
+// 無い（異常系。通常はplaySeason側のensureCompleteRotationで防ぐ）場合は
+// 単純平均にフォールバックする。
+function weightedAverage(roster, key) {
+  var totalMinutes = roster.reduce(function (s, p) { return s + p.rotation.minutes; }, 0);
+  if (totalMinutes === 0) return average(roster, key);
+  var sum = roster.reduce(function (s, p) { return s + p[key] * p.rotation.minutes; }, 0);
+  return sum / totalMinutes;
+}
+
 // チーム全体のシーズン合計（得点・リバウンド・アシスト・スティール）。
-// 出場時間や個々の選手は考えず、チーム平均能力から36試合分をまとめて出す。
+// 追加段階A-3から、チーム平均ではなく出場時間で重み付けした平均を使う
+// （出場していない選手はチームの数字に反映されなくなる）。
 // 係数はNBA的な1試合あたりの数字感（得点100前後、リバウンド40台など）に
 // 大まかに合わせただけの目安。
 function computeTeamSeasonTotals(roster) {
   return {
-    points: Math.round(SEASON_GAMES * (average(roster, "two") * 0.9 + average(roster, "three") * 0.7)),
-    rebounds: Math.round(SEASON_GAMES * average(roster, "reb") * 0.7),
-    assists: Math.round(SEASON_GAMES * average(roster, "drib") * 0.4),
-    steals: Math.round(SEASON_GAMES * average(roster, "defe") * 0.12)
+    points: Math.round(SEASON_GAMES * (weightedAverage(roster, "two") * 0.9 + weightedAverage(roster, "three") * 0.7)),
+    rebounds: Math.round(SEASON_GAMES * weightedAverage(roster, "reb") * 0.7),
+    assists: Math.round(SEASON_GAMES * weightedAverage(roster, "drib") * 0.4),
+    steals: Math.round(SEASON_GAMES * weightedAverage(roster, "defe") * 0.12)
   };
 }
 
 // 選手ごとの出場時間の割合（チーム内で合計1になる）。
-// 総合力が高いほど出場しやすいが、乱数の幅を大きめに取ることで
-// 「能力は高いのに出場機会がない選手」も出るようにしてある。
+// 追加段階A-3から、出場時間タブで実際に配分した分数(player.rotation.minutes)
+// をそのまま使う（以前は能力+乱数の自動計算だった）。
 function computePlayingTimeShares(roster) {
-  var raw = roster.map(function (player) {
-    return Math.max(overall(player) + randNormal(0, 8), 5);
-  });
-  var total = raw.reduce(function (sum, w) { return sum + w; }, 0);
-  return raw.map(function (w) { return w / total; });
+  var totalMinutes = roster.reduce(function (sum, p) { return sum + p.rotation.minutes; }, 0);
+  if (totalMinutes === 0) {
+    var equalShare = 1 / roster.length;
+    return roster.map(function () { return equalShare; });
+  }
+  return roster.map(function (p) { return p.rotation.minutes / totalMinutes; });
+}
+
+// 専門外のポジションで出場している場合の能力の目減り（1.0が本来どおり）。
+// rotation.positionが無い（出場していない）選手は1.0を返す
+// （出場時間0ならどのみち貢献も0になるため）。
+function playerPositionPenalty(player) {
+  if (!player.rotation.position) return 1.0;
+  return positionPenaltyMultiplier(player, player.rotation.position);
 }
 
 // 「重みの比率どおりにtotalを配る」だけの関数。得点・リバウンド・
@@ -522,17 +654,27 @@ function distributeByWeight(weights, total) {
 // 1チーム分の個人成績（シーズン合計）を計算し、各選手のstatsに書き込む。
 // 得点は2P・3P、リバウンドはリバウンド、アシストはドリブル、
 // スティールはディフェンスの能力から作る。保存するのはシーズン合計だけ。
+// 追加段階A-3から、出場時間の実配分と専門外ポジションのペナルティを反映する。
+// 出場時間の比率をそのまま重みに使うと、ポジションの手薄さ（たまたま
+// 同じポジションに競合が少ない）による偏りが能力より支配的になり、
+// 能力と成績の相関が0.87前後→0.37まで崩れた（60リーグ試行で確認）。
+// べき乗で0.2乗にまで圧縮すると0.85前後まで戻る（「出場機会が無ければ
+// 安く済む」効果は残しつつ、ポジション運の影響を弱める）。
+var PLAYING_TIME_SHARE_DAMPING = 0.2;
+
 function computeSeasonStats(team) {
   var roster = team.roster;
   var totals = computeTeamSeasonTotals(roster);
   var playingTimeShares = computePlayingTimeShares(roster);
+  var dampenedShares = playingTimeShares.map(function (share) { return Math.pow(share, PLAYING_TIME_SHARE_DAMPING); });
+  var penalties = roster.map(playerPositionPenalty);
 
   var pointsWeights = roster.map(function (p, i) {
-    return playingTimeShares[i] * (p.two * 0.9 + p.three * 0.7);
+    return dampenedShares[i] * (p.two * 0.9 + p.three * 0.7) * penalties[i];
   });
-  var reboundWeights = roster.map(function (p, i) { return playingTimeShares[i] * p.reb; });
-  var assistWeights = roster.map(function (p, i) { return playingTimeShares[i] * p.drib; });
-  var stealWeights = roster.map(function (p, i) { return playingTimeShares[i] * p.defe; });
+  var reboundWeights = roster.map(function (p, i) { return dampenedShares[i] * p.reb * penalties[i]; });
+  var assistWeights = roster.map(function (p, i) { return dampenedShares[i] * p.drib * penalties[i]; });
+  var stealWeights = roster.map(function (p, i) { return dampenedShares[i] * p.defe * penalties[i]; });
 
   var points = distributeByWeight(pointsWeights, totals.points);
   var rebounds = distributeByWeight(reboundWeights, totals.rebounds);
@@ -624,10 +766,18 @@ function performanceIndex(stats) {
   );
 }
 
-// performanceIndexは能力値と単位が違うので、40リーグ分のシミュレーション結果から
+// performanceIndexは能力値と単位が違うので、シミュレーション結果から
 // 平均・標準偏差を測り、能力overallと同じ分布になるようz-score変換する。
 // （型のバランスや人数を変えたら、この2つの定数は計算し直しが必要）
-var PERFORMANCE_CALIBRATION = { meanOverall: 66.7, sdOverall: 10.8, meanPerf: 679.6, sdPerf: 199.7 };
+//
+// 追加段階A-3で出場時間を実際の配分に基づく計算に変えたところ、
+// 少人数に成績が集中するようになり、sdPerfが199.7→約408.7まで
+// ほぼ倍になった。さらに、overallとperceivedOverallの相関係数が
+// 0.87前後→0.37まで崩れていることが判明した（ポジションの手薄さという
+// 能力と無関係な運が支配的になっていたため）。PLAYING_TIME_SHARE_DAMPING
+// で出場時間比率の影響を圧縮し直した後、この値を測り直した
+// （相関係数は0.85前後まで回復。下のverifySalaryDivergence参照）。
+var PERFORMANCE_CALIBRATION = { meanOverall: 67.0, sdOverall: 10.4, meanPerf: 690.6, sdPerf: 137.6 };
 
 // 要求額は能力そのものではなく前年の成績で決まる。
 // 出場時間の運で成績が能力より良く/悪く出た選手は、そのまま
@@ -650,7 +800,11 @@ function playerSalary(player) {
 // ロースターの年俸構成が変わり、4,600万円のままだと全選手を要求額どおりに
 // 契約した場合の適合率が約66%まで下がった。5,300万円に調整し、約84%まで戻した
 // （下のverifySalaryCapで150チーム分試行して確認）。
-var SALARY_CAP = 5300; // 万円
+//
+// 追加段階A-3で出場時間を実際の配分に基づく計算に変え、
+// PLAYING_TIME_SHARE_DAMPINGとPERFORMANCE_CALIBRATIONを測り直した後、
+// 6,000万円で約83%まで戻した（500試行2,000チームで確認）。
+var SALARY_CAP = 6000; // 万円
 
 // オフシーズンが進むほどFAの要求額が下がる。
 // 「もう少し待てば安く取れるかもしれない」という駆け引きを作るためのもの。
