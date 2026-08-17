@@ -91,6 +91,38 @@ function assignPositions(abilities, type) {
 // マルチポジションの市場価値の上乗せ（要求額の倍率）。playerSalary()参照。
 var MULTI_POSITION_SALARY_PREMIUM = 1.15;
 
+// 出場時間配分（A-2）。ポジション1つにつき48分の枠を選手たちで分け合う。
+// player.rotation = { position: "PG"などnull, minutes: 数値 } を選手ごとに持つ。
+var POSITION_MINUTES_CAP = 48;
+
+// 指定ポジションに現在割り振られている合計分数（自分自身の分も含む）
+function positionMinutesUsed(roster, position) {
+  return roster.reduce(function (sum, p) {
+    return p.rotation && p.rotation.position === position ? sum + p.rotation.minutes : sum;
+  }, 0);
+}
+
+// 選手の適性ポジション（positions配列）から、指定ポジションまでの
+// 隣接ステップ数（適性そのものなら0）
+function positionDistance(player, position) {
+  var target = POSITION_ORDER.indexOf(position);
+  var distances = player.positions.map(function (pos) {
+    return Math.abs(POSITION_ORDER.indexOf(pos) - target);
+  });
+  return Math.min.apply(null, distances);
+}
+
+// 専門外ポジションで起用したときの能力の目減り具合（1.0が本来どおり）。
+// A-2の時点ではまだ勝敗・成績には使わず、画面での目安表示にだけ使う。
+// A-3で実際にteamPower等の計算に反映する。
+function positionPenaltyMultiplier(player, position) {
+  var distance = positionDistance(player, position);
+  if (distance === 0) return 1.0;
+  if (distance === 1) return 0.85;
+  if (distance === 2) return 0.65;
+  return 0.45;
+}
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -159,6 +191,7 @@ function makePlayer(powerCoefficient) {
   // 初期ロースターが一斉に契約切れにならないよう、残り年数は1〜3年をランダムに割り振る
   player.contractYears = 1 + Math.floor(Math.random() * 3);
   player.contractSalary = playerSalary(player); // まだ成績が無いので能力ベースの額になる
+  player.rotation = { position: null, minutes: 0 }; // 出場時間配分（A-2）。毎シーズンadvanceSeason()でリセットされる
   return player;
 }
 
@@ -186,6 +219,7 @@ function makeRookie() {
   // 新人契約は一律2年（単純化。ベテランのように交渉で年数を選べたりはしない）
   player.contractYears = ROOKIE_CONTRACT_YEARS;
   player.contractSalary = playerSalary(player); // まだ成績が無いので能力ベースの額になる
+  player.rotation = { position: null, minutes: 0 };
   return player;
 }
 
@@ -291,6 +325,12 @@ function advanceSeason(league) {
   // （対象をどう扱うかはprocessExpiredAiContracts()・契約更改タブ側で行う）
   league.teams.forEach(function (team) {
     team.roster.forEach(function (p) { p.contractYears--; });
+  });
+
+  // 出場時間配分は毎シーズンリセットする（ロースターも年齢も変わるので、
+  // 前シーズンの配分をそのまま引き継がず、都度考え直してもらう）。
+  league.teams.forEach(function (team) {
+    team.roster.forEach(function (p) { p.rotation = { position: null, minutes: 0 }; });
   });
 
   league.teams.forEach(function (team) {

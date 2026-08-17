@@ -406,10 +406,154 @@ function renderContractsTab(container) {
   });
 }
 
+// 出場時間配分タブ（追加段階A-2）。1人1カードで、ポジション選択＋
+// 出場時間(5分刻み)を選ぶ。ここではまだ勝敗・個人成績・成長には使わず、
+// 保存と表示だけ（A-3で実際の計算に反映する）。
+function renderRotationSummary(container, team) {
+  container.innerHTML = "";
+  POSITION_ORDER.forEach(function (position) {
+    var used = positionMinutesUsed(team.roster, position);
+    var chip = document.createElement("span");
+    chip.className = "stat-chip" + (used >= POSITION_MINUTES_CAP ? " stat-chip--pending" : "");
+    chip.textContent = position + " " + used + "/" + POSITION_MINUTES_CAP + "分";
+    container.appendChild(chip);
+  });
+}
+
+function renderRotationCard(player, team, onChange) {
+  var card = document.createElement("div");
+  card.className = "player-card";
+  card.innerHTML =
+    '<div class="player-head">' +
+      '<div class="player-name">' + escapeHtml(player.name) + "</div>" +
+      '<div class="player-meta">' + escapeHtml(player.type) + "・" + player.age + "歳</div>" +
+    "</div>" +
+    '<div class="player-stats-line">' +
+      '<span class="stat-chip">総合 ' + Math.round(overall(player)) + '</span>' +
+      '<span class="stat-chip">適性 ' + player.positions.join("/") + '</span>' +
+    "</div>" +
+    '<div class="ability-bars">' + renderAbilityBars(player) + "</div>";
+
+  var block = document.createElement("div");
+  block.className = "rotation-block";
+
+  var posRow = document.createElement("div");
+  posRow.className = "rotation-position-row";
+  var posButtons = [];
+  POSITION_ORDER.forEach(function (position) {
+    var btn = document.createElement("button");
+    btn.textContent = position;
+    btn.addEventListener("click", function () {
+      player.rotation.position = position;
+      player.rotation.minutes = 0; // ポジションを変えたら出場時間はいったんリセット
+      persist();
+      onChange();
+      refresh();
+    });
+    posRow.appendChild(btn);
+    posButtons.push({ position: position, btn: btn });
+  });
+  block.appendChild(posRow);
+
+  var minutesRow = document.createElement("div");
+  minutesRow.className = "rotation-minutes-row";
+
+  var minusBtn = document.createElement("button");
+  minusBtn.className = "minutes-btn";
+  minusBtn.textContent = "-5分";
+  minusBtn.addEventListener("click", function () {
+    player.rotation.minutes = Math.max(0, player.rotation.minutes - 5);
+    persist();
+    onChange();
+    refresh();
+  });
+
+  var minutesLabel = document.createElement("span");
+  minutesLabel.className = "minutes-label";
+
+  var plusBtn = document.createElement("button");
+  plusBtn.className = "minutes-btn";
+  plusBtn.textContent = "+5分";
+  plusBtn.addEventListener("click", function () {
+    var remaining = POSITION_MINUTES_CAP - positionMinutesUsed(team.roster, player.rotation.position);
+    player.rotation.minutes += Math.min(5, remaining);
+    persist();
+    onChange();
+    refresh();
+  });
+
+  minutesRow.appendChild(minusBtn);
+  minutesRow.appendChild(minutesLabel);
+  minutesRow.appendChild(plusBtn);
+  block.appendChild(minutesRow);
+
+  var penaltyNote = document.createElement("p");
+  penaltyNote.className = "cap-warning";
+  block.appendChild(penaltyNote);
+
+  function refresh() {
+    var assigned = player.rotation.position;
+    posButtons.forEach(function (entry) {
+      var eligible = player.positions.indexOf(entry.position) !== -1;
+      entry.btn.className = "position-btn" +
+        (eligible ? " position-btn--eligible" : "") +
+        (assigned === entry.position ? " active" : "");
+    });
+
+    minutesLabel.textContent = assigned ? player.rotation.minutes + "分" : "未配置";
+    minusBtn.disabled = !assigned || player.rotation.minutes <= 0;
+    plusBtn.disabled = !assigned || positionMinutesUsed(team.roster, assigned) >= POSITION_MINUTES_CAP;
+
+    if (assigned && player.positions.indexOf(assigned) === -1) {
+      var multiplier = positionPenaltyMultiplier(player, assigned);
+      var percent = Math.round((1 - multiplier) * 100);
+      penaltyNote.textContent = "専門外のポジションです（能力が" + percent + "%落ちる目安。今はまだ試合結果に反映されません）";
+      penaltyNote.style.display = "";
+    } else {
+      penaltyNote.textContent = "";
+      penaltyNote.style.display = "none";
+    }
+  }
+
+  refresh();
+  card.appendChild(block);
+  return card;
+}
+
+function renderRotationTab(container) {
+  var team = league.teams[MY_TEAM_INDEX];
+
+  var note = document.createElement("p");
+  note.className = "contracts-empty";
+  note.textContent = "出場時間はまだ試合結果に反映されません（次の段階で反映予定）。ここでは配分の練習・保存だけができます。";
+  container.appendChild(note);
+
+  var summary = document.createElement("div");
+  summary.className = "cap-summary";
+  container.appendChild(summary);
+
+  function refreshSummary() {
+    renderRotationSummary(summary, team);
+  }
+  refreshSummary();
+
+  var listEl = document.createElement("div");
+  listEl.className = "card-grid";
+  container.appendChild(listEl);
+
+  var sorted = team.roster.slice().sort(function (a, b) {
+    return overall(b) - overall(a);
+  });
+  sorted.forEach(function (player) {
+    listEl.appendChild(renderRotationCard(player, team, refreshSummary));
+  });
+}
+
 // タブの定義。新しいタブを足すときはここに{id, label, render}を1つ追加するだけでよい
 // （index.html側は触らなくてよい。タブボタンも中身も、この配列から自動で作られる）。
 var TABS = [
   { id: "team", label: "自チーム", render: renderTeamTab },
+  { id: "rotation", label: "出場時間", render: renderRotationTab },
   { id: "standings", label: "順位表", render: renderStandingsTab },
   { id: "contracts", label: "契約更改", render: renderContractsTab },
   { id: "fa-market", label: "FA市場", render: renderFaMarketTab }

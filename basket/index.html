@@ -432,6 +432,74 @@
     text-align: center;
   }
 
+  /* 出場時間配分タブ */
+  .rotation-block {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+
+  .rotation-position-row {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+
+  .position-btn {
+    flex: 1;
+    border: 1px solid var(--border);
+    background: #ffffff;
+    color: var(--text-sub);
+    padding: 6px 0;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  /* 適性ポジション（本来の持ち場）を枠線と文字色で示す */
+  .position-btn--eligible {
+    border-color: var(--accent);
+    color: var(--accent);
+    font-weight: bold;
+  }
+
+  .position-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #ffffff;
+  }
+
+  .rotation-minutes-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+  }
+
+  .minutes-btn {
+    border: 1px solid var(--border);
+    background: #ffffff;
+    color: var(--text-sub);
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  .minutes-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .minutes-label {
+    min-width: 3.5em;
+    text-align: center;
+    font-weight: bold;
+    font-size: 0.95rem;
+  }
+
   footer {
     max-width: 480px;
     margin: 2rem auto 0;
