@@ -539,6 +539,19 @@ following-wind-site/basket/
 > localStorage は端末ごと。Mac で進めたデータはスマホから見えない。
 > これは仕様として受け入れる。
 
+> **不具合と対処（2026年時点）**: 追加段階A-1でplayer.positions、
+> A-2でplayer.rotationを選手データに追加したとき、SAVE_KEYのバージョンを
+> 上げ忘れた。その結果、それ以前のセーブ（この2つのフィールドが無い）を
+> 読み込んでも`loadGame()`のチェックを通過してしまい、出場時間タブの
+> 描画時に`player.positions.join(...)`でクラッシュし、画面が空白になる
+> 不具合が発生した（ユーザー報告で発覚）。
+> `basket_save_v1`→`v2`に上げて対処し、加えて`looksLikeValidPlayer()`で
+> 選手データの主要フィールド（positions・rotation・contractYears・
+> contractSalary）の形も確認するようにした。次に同じ上げ忘れをしても、
+> 白画面やクラッシュではなく新規開始に落ちる。
+> **教訓: 選手データに新しいフィールドを追加するときは、SAVE_KEYの
+> バージョンを上げることを毎回セットで確認する。**
+
 ---
 
 ## 途中で変更しない数字

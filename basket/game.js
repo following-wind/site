@@ -943,10 +943,17 @@ function verifyPopulationStability(trials, seasons) {
 // セーブデータの読み書き（localStorage）。
 // キーは1つにまとめ、バージョン番号を入れる（DESIGN.md「保存」参照）。
 // 仕様変更で古いセーブと形が合わなくなったら、SAVE_KEYの末尾を
-// v2などに上げれば古いデータと衝突しない。
+// 上げる（v1→v2）。古いキーのデータはそのまま残るが二度と読まれない
+// ので、新しいキーと衝突しない。
+// v1→v2: 追加段階A-1でplayer.positions・A-2でplayer.rotationを
+// 追加したが、SAVE_KEYを上げ忘れていた。古いセーブ（この2つが無い）を
+// 読み込むと出場時間タブの描画でクラッシュする不具合があったため、
+// v2に上げるのと合わせて、下のlooksLikeValidPlayer()で選手の形も
+// 確認するようにした（次に同じ上げ忘れをしても、真っ白な画面や
+// クラッシュではなく新規開始に落ちるようにするための保険）。
 // localStorageはブラウザにしか無いので、関数の中でだけ参照する
 // （node game.jsで動かすconsole確認では呼ばれないようにする）。
-var SAVE_KEY = "basket_save_v1";
+var SAVE_KEY = "basket_save_v2";
 
 function saveGame(league, currentSeason, inOffseason) {
   var payload = { key: SAVE_KEY, currentSeason: currentSeason, inOffseason: !!inOffseason, league: league };
@@ -955,6 +962,17 @@ function saveGame(league, currentSeason, inOffseason) {
   } catch (e) {
     // 保存に失敗しても続行に支障は無い（容量超過など）ので握りつぶす
   }
+}
+
+// 選手データとして最低限の形になっているかを確認する。
+// バージョンを上げ忘れたときの保険なので、全フィールドは見ずに
+// 描画で必ず参照する主要なものだけ確認する。
+function looksLikeValidPlayer(player) {
+  return !!player &&
+    Array.isArray(player.positions) && player.positions.length > 0 &&
+    !!player.rotation && typeof player.rotation === "object" &&
+    typeof player.contractYears === "number" &&
+    typeof player.contractSalary === "number";
 }
 
 // 保存データを読み込む。無い/壊れている/形が合わない場合はnullを返し、
@@ -968,6 +986,12 @@ function loadGame() {
     if (!payload || payload.key !== SAVE_KEY) return null;
     if (!payload.league || !Array.isArray(payload.league.teams) || !Array.isArray(payload.league.freeAgents)) return null;
     if (typeof payload.currentSeason !== "number") return null;
+
+    var teamsLookValid = payload.league.teams.every(function (team) {
+      return Array.isArray(team.roster) && team.roster.every(looksLikeValidPlayer);
+    });
+    var faLookValid = payload.league.freeAgents.every(looksLikeValidPlayer);
+    if (!teamsLookValid || !faLookValid) return null;
 
     return payload;
   } catch (e) {
