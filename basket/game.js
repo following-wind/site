@@ -40,6 +40,57 @@ var PLAYER_TYPES = {
 };
 var PLAYER_TYPE_NAMES = Object.keys(PLAYER_TYPES);
 
+// ポジション（PG/SG/SF/PF/C）。この並び順を「隣接」の判定にも使う
+// （例: SFの隣はSGとPF）。
+var POSITION_ORDER = ["PG", "SG", "SF", "PF", "C"];
+
+// 型ごとの候補ポジションと、判定に使う能力（下のpickPrimaryPosition参照）。
+// 守備職人は当初PG/C（両極端）で考えていたが、defe+18・reb+4という
+// 能力からSF/PFのほうが自然で、他の3つとも隣接ポジションになる点を
+// 優先してこちらにした。
+// カバレッジ: PG=オールラウンドのみ / SG,SF,PF=2型ずつ / C=ビッグマンのみ。
+// PG・Cが手薄なのは織り込み済みで、下のensurePositionCoverage()で補う。
+var TYPE_POSITION_CANDIDATES = {
+  "シューター": { high: "SG", low: "SF", key: "drib" },
+  "ビッグマン": { high: "C", low: "PF", key: "defe" },
+  "オールラウンド": { high: "SG", low: "PG", key: "three" },
+  "守備職人": { high: "PF", low: "SF", key: "reb" }
+};
+
+// 型の候補2つのうち、判定軸の能力が高いほどhigh側に倒れやすくする。
+// 差が大きいほど強く倒れるが、決定論にはしない（低い方になることもある）。
+function pickPrimaryPosition(abilities, type) {
+  var rule = TYPE_POSITION_CANDIDATES[type];
+  var diff = abilities[rule.key] - 65; // 65前後を基準に高低を見る
+  var probHigh = clamp(0.5 + diff * 0.02, 0.15, 0.85);
+  return Math.random() < probHigh ? rule.high : rule.low;
+}
+
+function adjacentPositions(position) {
+  var index = POSITION_ORDER.indexOf(position);
+  var adjacent = [];
+  if (index > 0) adjacent.push(POSITION_ORDER[index - 1]);
+  if (index < POSITION_ORDER.length - 1) adjacent.push(POSITION_ORDER[index + 1]);
+  return adjacent;
+}
+
+// 一定確率で隣接ポジションをもう1つ持たせる（マルチポジション）。
+// 専門外での起用ペナルティや出場時間の割り振りはA-3で扱うので、
+// ここではポジションを決めるだけ。
+var MULTI_POSITION_CHANCE = 0.25;
+
+function assignPositions(abilities, type) {
+  var primary = pickPrimaryPosition(abilities, type);
+  var positions = [primary];
+  if (Math.random() < MULTI_POSITION_CHANCE) {
+    positions.push(pickRandom(adjacentPositions(primary)));
+  }
+  return positions;
+}
+
+// マルチポジションの市場価値の上乗せ（要求額の倍率）。playerSalary()参照。
+var MULTI_POSITION_SALARY_PREMIUM = 1.15;
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -96,6 +147,7 @@ function makePlayer(powerCoefficient) {
   var player = {
     name: makePlayerName(),
     type: type,
+    positions: assignPositions(abilities, type),
     age: 20 + Math.floor(Math.random() * 14), // 初期ロースターは20〜33歳の分布
     two: abilities.two,
     three: abilities.three,
@@ -122,6 +174,7 @@ function makeRookie() {
   var player = {
     name: makePlayerName(),
     type: type,
+    positions: assignPositions(abilities, type),
     age: 19 + Math.floor(Math.random() * 4),
     two: abilities.two,
     three: abilities.three,
@@ -204,6 +257,30 @@ var TEAM_ROSTER_CAP = 13;
 // advanceSeason()とplaySeason()の間で行う想定）。
 // 新人は人数が少ないチームから優先的に上限13人まで割り振り、
 // 余った分だけFAに回る。
+// チームに5ポジション全部が埋まっているか確認し、欠けていれば一番近い
+// （隣接ステップ数が少ない）選手にそのポジションをマルチポジションとして
+// 追加する。TYPE_POSITION_CANDIDATESの設計上PG・Cは供給元が1型しかなく
+// 手薄になりやすいので、この補正が実質的な保険になる。
+function ensurePositionCoverage(roster) {
+  POSITION_ORDER.forEach(function (position) {
+    var covered = roster.some(function (p) { return p.positions.indexOf(position) !== -1; });
+    if (covered || roster.length === 0) return;
+
+    var best = roster[0];
+    var bestDistance = Infinity;
+    roster.forEach(function (p) {
+      var distance = Math.min.apply(null, p.positions.map(function (pos) {
+        return Math.abs(POSITION_ORDER.indexOf(pos) - POSITION_ORDER.indexOf(position));
+      }));
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = p;
+      }
+    });
+    best.positions.push(position);
+  });
+}
+
 function advanceSeason(league) {
   league.teams.forEach(function (team) {
     team.roster.forEach(growPlayer);
@@ -239,6 +316,8 @@ function advanceSeason(league) {
       league.freeAgents.push(rookie);
     }
   });
+
+  league.teams.forEach(function (team) { ensurePositionCoverage(team.roster); });
 }
 
 // チーム力 = 全選手の5項目の単純合計（第1段階の単純版）
@@ -258,6 +337,7 @@ function setupLeague() {
     var powerCoefficient = TEAM_POWER_COEFFICIENTS[index];
     var roster = [];
     for (var i = 0; i < 12; i++) roster.push(makePlayer(powerCoefficient));
+    ensurePositionCoverage(roster);
     return { name: name, roster: roster, wins: 0, losses: 0, powerCoefficient: powerCoefficient };
   });
 
@@ -452,7 +532,9 @@ function perceivedOverall(player) {
 }
 
 function playerSalary(player) {
-  return calcSalary(perceivedOverall(player));
+  var base = calcSalary(perceivedOverall(player));
+  if (player.positions && player.positions.length > 1) return Math.round(base * MULTI_POSITION_SALARY_PREMIUM);
+  return base;
 }
 
 // サラリーキャップ（1チームあたり）。
