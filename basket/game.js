@@ -123,6 +123,73 @@ function positionPenaltyMultiplier(player, position) {
   return 0.45;
 }
 
+// 「おまかせ配分」。毎シーズン13人分をゼロから配るのは手間なので、
+// 能力順に機械的に埋める出発点を作る。そこから手で調整する想定。
+//   1. 候補が少ないポジションほど先に、能力最高の未配置選手を割り当てる
+//      （マルチポジション選手を先に他ポジションへ取られて、候補1人だけの
+//      ポジションが空のまま残る事故を防ぐ）。ただし、同じ1人が2つの
+//      ポジションの「唯一の候補」になっているケースだけはどうやっても
+//      両方は埋まらない（そもそも埋められる人が1人しかいない）。
+//      50〜200試行で発生率は1〜2%程度。空のままでも壊れはしないので、
+//      その場合だけ手で埋めてもらう想定（「おまかせ配分」はあくまで
+//      出発点で、完璧な自動配分を保証するものではない）。
+//   2. 残りの選手を、能力の高い順に「適性ポジションのうち今一番人数が
+//      少ないほう」へ割り当てる（特定ポジションへの偏りを抑える）
+//   3. 各ポジション内では、能力に比例して48分を配分する
+//      （丸め誤差はそのポジションで一番能力が高い選手が吸収する）
+function autoFillRotation(roster) {
+  var byAbilityDesc = roster.slice().sort(function (a, b) { return overall(b) - overall(a); });
+  var countByPosition = {};
+  POSITION_ORDER.forEach(function (position) { countByPosition[position] = 0; });
+
+  var assignedPlayers = [];
+  function isAssigned(player) { return assignedPlayers.indexOf(player) !== -1; }
+  function assign(player, position) {
+    player.rotation.position = position;
+    player.rotation.minutes = 0;
+    countByPosition[position]++;
+    assignedPlayers.push(player);
+  }
+
+  var positionsByScarcity = POSITION_ORDER.slice().sort(function (a, b) {
+    var countA = roster.filter(function (p) { return p.positions.indexOf(a) !== -1; }).length;
+    var countB = roster.filter(function (p) { return p.positions.indexOf(b) !== -1; }).length;
+    return countA - countB;
+  });
+  positionsByScarcity.forEach(function (position) {
+    var candidate = byAbilityDesc.filter(function (p) {
+      return !isAssigned(p) && p.positions.indexOf(position) !== -1;
+    })[0];
+    if (candidate) assign(candidate, position);
+  });
+
+  byAbilityDesc.forEach(function (player) {
+    if (isAssigned(player)) return;
+    var candidates = player.positions.length > 0 ? player.positions : [POSITION_ORDER[0]];
+    var chosen = candidates[0];
+    candidates.forEach(function (position) {
+      if (countByPosition[position] < countByPosition[chosen]) chosen = position;
+    });
+    assign(player, chosen);
+  });
+
+  POSITION_ORDER.forEach(function (position) {
+    var players = roster
+      .filter(function (p) { return p.rotation.position === position; })
+      .sort(function (a, b) { return overall(b) - overall(a); });
+    if (players.length === 0) return;
+
+    var weights = players.map(function (p) { return overall(p); });
+    var totalWeight = weights.reduce(function (sum, w) { return sum + w; }, 0);
+    var minutes = weights.map(function (w) { return Math.round(POSITION_MINUTES_CAP * w / totalWeight); });
+
+    var sum = minutes.reduce(function (s, m) { return s + m; }, 0);
+    minutes[0] += POSITION_MINUTES_CAP - sum; // 丸め誤差は一番能力が高い選手で吸収し、必ず合計48分にする
+
+    players.forEach(function (p, i) { p.rotation.minutes = Math.max(0, minutes[i]); });
+  });
+}
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }

@@ -470,20 +470,22 @@
     color: #ffffff;
   }
 
+  /* -5/-1/+1/+5の4ボタン＋中央のラベル。5つ並んでも狭い画面に収まるよう
+     余白を詰めてある。1分刻みだが、1分ずつ48回押さずに済むようにしている。 */
   .rotation-minutes-row {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 12px;
+    gap: 6px;
   }
 
   .minutes-btn {
     border: 1px solid var(--border);
     background: #ffffff;
     color: var(--text-sub);
-    padding: 6px 12px;
+    padding: 6px 8px;
     border-radius: 6px;
-    font-size: 0.8rem;
+    font-size: 0.78rem;
     font-family: inherit;
     cursor: pointer;
   }
@@ -494,10 +496,10 @@
   }
 
   .minutes-label {
-    min-width: 3.5em;
+    min-width: 3em;
     text-align: center;
     font-weight: bold;
-    font-size: 0.95rem;
+    font-size: 0.9rem;
   }
 
   footer {

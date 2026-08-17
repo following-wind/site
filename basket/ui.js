@@ -455,36 +455,44 @@ function renderRotationCard(player, team, onChange) {
   });
   block.appendChild(posRow);
 
+  // 出場時間は1分単位で保存するが、1分ずつ48回押すのは非現実的なので
+  // -5/-1/+1/+5の4ボタンにして、大きく動かす・微調整するの両方をできるようにした。
   var minutesRow = document.createElement("div");
   minutesRow.className = "rotation-minutes-row";
 
-  var minusBtn = document.createElement("button");
-  minusBtn.className = "minutes-btn";
-  minusBtn.textContent = "-5分";
-  minusBtn.addEventListener("click", function () {
-    player.rotation.minutes = Math.max(0, player.rotation.minutes - 5);
+  function adjustMinutes(delta) {
+    if (!player.rotation.position) return;
+    if (delta > 0) {
+      var remaining = POSITION_MINUTES_CAP - positionMinutesUsed(team.roster, player.rotation.position);
+      player.rotation.minutes += Math.min(delta, remaining);
+    } else {
+      player.rotation.minutes = Math.max(0, player.rotation.minutes + delta);
+    }
     persist();
     onChange();
     refresh();
-  });
+  }
 
+  function makeStepButton(label, delta) {
+    var btn = document.createElement("button");
+    btn.className = "minutes-btn";
+    btn.textContent = label;
+    btn.addEventListener("click", function () { adjustMinutes(delta); });
+    return btn;
+  }
+
+  var minus5Btn = makeStepButton("-5", -5);
+  var minus1Btn = makeStepButton("-1", -1);
   var minutesLabel = document.createElement("span");
   minutesLabel.className = "minutes-label";
+  var plus1Btn = makeStepButton("+1", 1);
+  var plus5Btn = makeStepButton("+5", 5);
 
-  var plusBtn = document.createElement("button");
-  plusBtn.className = "minutes-btn";
-  plusBtn.textContent = "+5分";
-  plusBtn.addEventListener("click", function () {
-    var remaining = POSITION_MINUTES_CAP - positionMinutesUsed(team.roster, player.rotation.position);
-    player.rotation.minutes += Math.min(5, remaining);
-    persist();
-    onChange();
-    refresh();
-  });
-
-  minutesRow.appendChild(minusBtn);
+  minutesRow.appendChild(minus5Btn);
+  minutesRow.appendChild(minus1Btn);
   minutesRow.appendChild(minutesLabel);
-  minutesRow.appendChild(plusBtn);
+  minutesRow.appendChild(plus1Btn);
+  minutesRow.appendChild(plus5Btn);
   block.appendChild(minutesRow);
 
   var penaltyNote = document.createElement("p");
@@ -501,8 +509,11 @@ function renderRotationCard(player, team, onChange) {
     });
 
     minutesLabel.textContent = assigned ? player.rotation.minutes + "分" : "未配置";
-    minusBtn.disabled = !assigned || player.rotation.minutes <= 0;
-    plusBtn.disabled = !assigned || positionMinutesUsed(team.roster, assigned) >= POSITION_MINUTES_CAP;
+    var remaining = assigned ? POSITION_MINUTES_CAP - positionMinutesUsed(team.roster, assigned) : 0;
+    minus5Btn.disabled = !assigned || player.rotation.minutes <= 0;
+    minus1Btn.disabled = !assigned || player.rotation.minutes <= 0;
+    plus1Btn.disabled = !assigned || remaining <= 0;
+    plus5Btn.disabled = !assigned || remaining <= 0;
 
     if (assigned && player.positions.indexOf(assigned) === -1) {
       var multiplier = positionPenaltyMultiplier(player, assigned);
@@ -528,6 +539,18 @@ function renderRotationTab(container) {
   note.textContent = "出場時間はまだ試合結果に反映されません（次の段階で反映予定）。ここでは配分の練習・保存だけができます。";
   container.appendChild(note);
 
+  // 13人分をゼロから毎シーズン配るのは手間なので、能力順に自動で埋める
+  // 「おまかせ配分」を用意した。そこから手で直したいところだけ調整できる。
+  var autoFillBtn = document.createElement("button");
+  autoFillBtn.className = "season-btn";
+  autoFillBtn.textContent = "おまかせ配分（能力順に自動で埋める）";
+  container.appendChild(autoFillBtn);
+
+  var autoFillNote = document.createElement("p");
+  autoFillNote.className = "cap-warning";
+  autoFillNote.textContent = "現在の配分を上書きします。そこから手で調整できます。";
+  container.appendChild(autoFillNote);
+
   var summary = document.createElement("div");
   summary.className = "cap-summary";
   container.appendChild(summary);
@@ -541,11 +564,22 @@ function renderRotationTab(container) {
   listEl.className = "card-grid";
   container.appendChild(listEl);
 
-  var sorted = team.roster.slice().sort(function (a, b) {
-    return overall(b) - overall(a);
-  });
-  sorted.forEach(function (player) {
-    listEl.appendChild(renderRotationCard(player, team, refreshSummary));
+  function renderList() {
+    listEl.innerHTML = "";
+    var sorted = team.roster.slice().sort(function (a, b) {
+      return overall(b) - overall(a);
+    });
+    sorted.forEach(function (player) {
+      listEl.appendChild(renderRotationCard(player, team, refreshSummary));
+    });
+  }
+  renderList();
+
+  autoFillBtn.addEventListener("click", function () {
+    autoFillRotation(team.roster);
+    persist();
+    refreshSummary();
+    renderList();
   });
 }
 
