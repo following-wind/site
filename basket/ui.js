@@ -120,8 +120,6 @@ function renderTeamTab(container) {
 // 順位表タブ: 4チームを勝ち数の多い順に並べ、自チームの行だけ強調する。
 // 性格列はAIチームの癖を覚える手がかりなので毎回表示する。
 // 自チームの行は性格名の代わりに「あなた」と表示する。
-// 追加段階B-1で得失点差(pointsFor-pointsAgainst)を積み上げるようにしたので、
-// 同率（勝ち数が同じ）ときのタイブレークに使う。
 //
 // 不具合と対処（B-2の実プレイで発覚）: シーズン中は常にteam.wins等
 // （シーズン最終の値）をそのまま表示していたため、試合結果タブで
@@ -131,12 +129,23 @@ function renderTeamTab(container) {
 // 成績を計算して表示するようにした（game.js側の関数、計算はそちらに
 // 置く）。オフシーズン中はそのシーズンの決着がついている（契約更改も
 // 最終成績を基準に行う）ので、消化数によらず最終結果を表示する。
+//
+// 得失点差の列は表示しない（DESIGN.md参照）。当初は同率時のタイブレーク
+// も兼ねて表示していたが、得点計算の設計上（勝敗は乱数、得点は矛盾しない
+// 範囲で別に後付け生成）勝ち数の順位と食い違うことがあり、矛盾した数字を
+// 見せ続けるより外す方がよいとユーザーが判断した。同率時は直接対決の
+// 成績（そのシーズンにお互いに何勝したか）で決める。
+function headToHeadWinCount(team, sliceCount, opponentName) {
+  return team.gameLog.slice(0, sliceCount).filter(function (g) {
+    return g.opponent === opponentName && g.win;
+  }).length;
+}
+
 function renderStandingsTab(container) {
   var revealCount = inOffseason ? Infinity : revealedGames;
 
-  var records = league.teams.map(function (team) {
-    return partialRecord(team, Math.min(revealCount, team.gameLog.length));
-  });
+  var sliceCounts = league.teams.map(function (team) { return Math.min(revealCount, team.gameLog.length); });
+  var records = league.teams.map(function (team, i) { return partialRecord(team, sliceCounts[i]); });
 
   if (!inOffseason) {
     var note = document.createElement("p");
@@ -147,7 +156,10 @@ function renderStandingsTab(container) {
 
   var order = league.teams.map(function (team, i) { return i; }).sort(function (ia, ib) {
     if (records[ib].wins !== records[ia].wins) return records[ib].wins - records[ia].wins;
-    return (records[ib].pointsFor - records[ib].pointsAgainst) - (records[ia].pointsFor - records[ia].pointsAgainst);
+    var teamA = league.teams[ia], teamB = league.teams[ib];
+    var aWinsVsB = headToHeadWinCount(teamA, sliceCounts[ia], teamB.name);
+    var bWinsVsA = headToHeadWinCount(teamB, sliceCounts[ib], teamA.name);
+    return bWinsVsA - aWinsVsB; // 直接対決で勝ち越している方を上にする
   });
 
   var table = document.createElement("table");
@@ -159,8 +171,6 @@ function renderStandingsTab(container) {
     var winRate = games > 0 ? (record.wins / games * 100).toFixed(1) : "0.0";
     var isMine = teamIndex === MY_TEAM_INDEX;
     var personalityLabel = isMine ? "あなた" : PERSONALITY_LABELS[TEAM_PERSONALITIES[teamIndex]];
-    var diff = record.pointsFor - record.pointsAgainst;
-    var diffLabel = (diff > 0 ? "+" : "") + diff;
     return (
       '<tr class="' + (isMine ? "standings-row--mine" : "") + '">' +
         "<td>" + (rank + 1) + "</td>" +
@@ -168,13 +178,12 @@ function renderStandingsTab(container) {
         "<td>" + escapeHtml(personalityLabel) + "</td>" +
         "<td>" + record.wins + "勝" + record.losses + "敗</td>" +
         "<td>" + winRate + "%</td>" +
-        "<td>" + diffLabel + "</td>" +
       "</tr>"
     );
   }).join("");
 
   table.innerHTML =
-    "<thead><tr><th>順位</th><th>チーム</th><th>性格</th><th>成績</th><th>勝率</th><th>得失点差</th></tr></thead>" +
+    "<thead><tr><th>順位</th><th>チーム</th><th>性格</th><th>成績</th><th>勝率</th></tr></thead>" +
     "<tbody>" + rowsHtml + "</tbody>";
 
   container.appendChild(table);
