@@ -880,11 +880,28 @@ function distributeByWeight(weights, total, carry) {
   var shortfall = total - rounded.reduce(function (s, v) { return s + v; }, 0);
 
   if (shortfall > 0) {
-    // 端数(remainder)が大きい選手から順に+1ずつ配る。
-    // shortfallは各remainderが1未満であることから必ずweights.length未満になる。
+    // 端数(remainder)が大きい選手から順に+1ずつ配る。重み0（出場時間0）の
+    // 選手は候補から除外する（=出場時間0の選手が成績を持たないことを、
+    // 確率的にではなく必ずそうなる形で保証する）。通常は重み0の選手の
+    // remainderも0（carryが0に固定されるため）で自然と選ばれないはずだが、
+    // 出場している選手がごく少数しかいない極端なロースターでは
+    // shortfallが実際に出場している人数を上回る可能性が理論上あり、
+    // その場合に重み0の選手まで選ばれてしまう抜け道になっていた。
     var addOrder = remainders.map(function (r, i) { return i; })
+      .filter(function (i) { return weights[i] > 0; })
       .sort(function (a, b) { return remainders[b] - remainders[a]; });
-    for (var k = 0; k < shortfall; k++) rounded[addOrder[k]] += 1;
+    var filled = Math.min(shortfall, addOrder.length);
+    for (var k = 0; k < filled; k++) rounded[addOrder[k]] += 1;
+    if (filled < shortfall) {
+      // 理論上ここには来ないはずだが（sum>0だけは早期returnで保証済み）、
+      // 万一候補が尽きたら重みが一番大きい選手にまとめて残りを渡す
+      // （0の選手ではなく、必ず重み>0の選手に寄せる）。
+      var maxWeightIndex = 0;
+      for (var wi = 1; wi < weights.length; wi++) {
+        if (weights[wi] > weights[maxWeightIndex]) maxWeightIndex = wi;
+      }
+      rounded[maxWeightIndex] += shortfall - filled;
+    }
   } else if (shortfall < 0) {
     // 稀に(下限0の丸め込みで)totalを超えるケース。一番多く配分されている
     // 選手から順に1ずつ引いて必ずtotalに一致させる（負の値にはしない）。
@@ -1701,6 +1718,35 @@ function verifyZeroMinutesZeroStats(trials) {
   }
 
   console.log(tested + "試行で確認（唯一の担当者が見つからなかった試行は除く）");
+
+  // シナリオ2: 複数人を同時にベンチに落とす（ユーザー報告どおり2人以上が
+  // 同時に成績を持ってしまうケース）。13人中11人を0分にする極端な
+  // ケースも混ぜ、distributeByWeight()の最大剰余方式が出場している人数を
+  // 上回るshortfallを重み0の選手に回してしまわないか（理論上の抜け道への
+  // 対処）もあわせて確認する。
+  var multiTested = 0;
+  for (var t2 = 0; t2 < trials; t2++) {
+    var league2 = setupLeague();
+    var team2 = league2.teams[0];
+    autoFillRotation(team2.roster);
+
+    var keepers = team2.roster.slice(0, 2);
+    var benched = team2.roster.slice(2); // 13人中11人をベンチに落とす
+    benched.forEach(function (p) { p.rotation.minutes = 0; });
+    multiTested++;
+
+    league2.teams.forEach(function (tm) { if (tm !== team2) autoFillRotation(tm.roster); });
+    resetRecords(league2.teams);
+    playSeason(league2.teams);
+
+    benched.forEach(function (p) {
+      if (p.stats.points !== 0 || p.stats.rebounds !== 0 || p.stats.assists !== 0 || p.stats.steals !== 0) {
+        problems.push("[複数人ベンチ]" + p.name + ": シーズン成績が0になっていない " + JSON.stringify(p.stats));
+      }
+    });
+  }
+  console.log(multiTested + "試行で確認（13人中11人を同時にベンチ化）");
+
   console.log(problems.length === 0 ? "OK: 出場時間0の選手の成績は全試合・シーズン合計とも0" : "NG: " + problems.length + "件");
   problems.slice(0, 10).forEach(function (p) { console.log("  " + p); });
 }
