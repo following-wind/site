@@ -10,8 +10,8 @@
   ============================================================
   進み具合について
   ============================================================
-  「自チーム」「順位表」「契約更改」「FA市場」の4タブが揃いました
-  （指示書の第5段階のタブ構成どおり）。
+  「自チーム」「出場時間」「試合結果」「順位表」「契約更改」「FA市場」の
+  6タブが揃いました。
   タブの中身はui.jsのTABS配列で定義していて、
   新しいタブを足すときはそこに{id, label, render}を1つ追加するだけでOK。
   計算そのもの（選手生成・成長・年俸など）はgame.jsにあり、
@@ -500,6 +500,119 @@
     text-align: center;
     font-weight: bold;
     font-size: 0.9rem;
+  }
+
+  /* 試合結果タブ */
+  .games-progress {
+    font-size: 0.85rem;
+    color: var(--text-sub);
+    margin: 0 0 10px;
+  }
+
+  .games-controls {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+
+  .games-advance-btn {
+    flex: 1;
+    border: 1px solid var(--border);
+    background: #ffffff;
+    color: var(--text-sub);
+    padding: 8px 4px;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  .games-advance-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .games-advance-btn--all {
+    color: var(--accent);
+  }
+
+  .games-empty {
+    color: var(--text-sub);
+    font-size: 0.875rem;
+    text-align: center;
+    padding: 24px 16px;
+  }
+
+  .game-log {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .game-entry {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .game-entry--expanded {
+    border-color: var(--accent);
+  }
+
+  .game-entry-header {
+    width: 100%;
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 6px;
+    background: #ffffff;
+    border: none;
+    padding: 10px 12px;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .game-entry-num {
+    font-size: 0.7rem;
+    color: var(--text-sub);
+    flex: 0 0 auto;
+  }
+
+  .game-entry-opponent {
+    font-size: 0.85rem;
+    flex: 1 1 auto;
+  }
+
+  .game-entry-score {
+    font-size: 0.9rem;
+    font-weight: bold;
+    color: var(--text-sub);
+    white-space: nowrap;
+  }
+
+  .game-entry-score--win {
+    color: var(--accent);
+  }
+
+  .game-boxscore {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+  }
+
+  .game-boxscore th,
+  .game-boxscore td {
+    padding: 6px 8px;
+    text-align: left;
+    border-top: 1px solid var(--border);
+  }
+
+  .game-boxscore th {
+    font-size: 0.7rem;
+    font-weight: normal;
+    color: var(--text-sub);
+    background: var(--accent-pale);
   }
 
   footer {

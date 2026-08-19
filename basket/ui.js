@@ -120,9 +120,12 @@ function renderTeamTab(container) {
 // 順位表タブ: 4チームを勝ち数の多い順に並べ、自チームの行だけ強調する。
 // 性格列はAIチームの癖を覚える手がかりなので毎回表示する。
 // 自チームの行は性格名の代わりに「あなた」と表示する。
+// 追加段階B-1で得失点差(pointsFor-pointsAgainst)を積み上げるようにしたので、
+// 同率（勝ち数が同じ）ときのタイブレークに使う。
 function renderStandingsTab(container) {
   var standings = league.teams.slice().sort(function (a, b) {
-    return b.wins - a.wins;
+    if (b.wins !== a.wins) return b.wins - a.wins;
+    return (b.pointsFor - b.pointsAgainst) - (a.pointsFor - a.pointsAgainst);
   });
 
   var table = document.createElement("table");
@@ -133,6 +136,8 @@ function renderStandingsTab(container) {
     var teamIndex = league.teams.indexOf(team);
     var isMine = teamIndex === MY_TEAM_INDEX;
     var personalityLabel = isMine ? "あなた" : PERSONALITY_LABELS[TEAM_PERSONALITIES[teamIndex]];
+    var diff = team.pointsFor - team.pointsAgainst;
+    var diffLabel = (diff > 0 ? "+" : "") + diff;
     return (
       '<tr class="' + (isMine ? "standings-row--mine" : "") + '">' +
         "<td>" + (index + 1) + "</td>" +
@@ -140,15 +145,127 @@ function renderStandingsTab(container) {
         "<td>" + escapeHtml(personalityLabel) + "</td>" +
         "<td>" + team.wins + "勝" + team.losses + "敗</td>" +
         "<td>" + winRate + "%</td>" +
+        "<td>" + diffLabel + "</td>" +
       "</tr>"
     );
   }).join("");
 
   table.innerHTML =
-    "<thead><tr><th>順位</th><th>チーム</th><th>性格</th><th>成績</th><th>勝率</th></tr></thead>" +
+    "<thead><tr><th>順位</th><th>チーム</th><th>性格</th><th>成績</th><th>勝率</th><th>得失点差</th></tr></thead>" +
     "<tbody>" + rowsHtml + "</tbody>";
 
   container.appendChild(table);
+}
+
+// 試合結果タブ: 自チームの今シーズンの試合(gameLog、36試合)を
+// 1試合ずつ／5試合まとめて／シーズン終わりまでの3モードで見る。
+// 試合そのものはシーズン開始時に全部計算済みなので、ここはrevealedGames
+// （何試合目まで見たか）を進めるだけの表示専用の仕組み。
+var GAMES_ADVANCE_STEPS = [1, 5];
+
+function advanceRevealedGames(count) {
+  var total = league.teams[MY_TEAM_INDEX].gameLog.length;
+  revealedGames = Math.min(total, revealedGames + count);
+  persist();
+  renderActiveTab();
+}
+
+function renderGameBoxScore(game) {
+  var sorted = game.players.slice().sort(function (a, b) { return b.points - a.points; });
+  var rowsHtml = sorted.map(function (p) {
+    return (
+      "<tr>" +
+        "<td>" + escapeHtml(p.name) + "</td>" +
+        "<td>" + p.points + "</td>" +
+        "<td>" + p.rebounds + "</td>" +
+        "<td>" + p.assists + "</td>" +
+        "<td>" + p.steals + "</td>" +
+      "</tr>"
+    );
+  }).join("");
+
+  var table = document.createElement("table");
+  table.className = "game-boxscore";
+  table.innerHTML =
+    "<thead><tr><th>選手</th><th>得点</th><th>R</th><th>A</th><th>S</th></tr></thead>" +
+    "<tbody>" + rowsHtml + "</tbody>";
+  return table;
+}
+
+function renderGameEntry(game, gameNumber, expanded) {
+  var wrap = document.createElement("div");
+  wrap.className = "game-entry" + (expanded ? " game-entry--expanded" : "");
+
+  var header = document.createElement("button");
+  header.type = "button";
+  header.className = "game-entry-header";
+  header.innerHTML =
+    '<span class="game-entry-num">第' + gameNumber + "試合</span>" +
+    '<span class="game-entry-opponent">vs ' + escapeHtml(game.opponent) + "</span>" +
+    '<span class="game-entry-score' + (game.win ? " game-entry-score--win" : "") + '">' +
+      game.myScore + " - " + game.oppScore + "　" + (game.win ? "勝" : "敗") +
+    "</span>";
+  wrap.appendChild(header);
+
+  var box = renderGameBoxScore(game);
+  box.style.display = expanded ? "" : "none";
+  wrap.appendChild(box);
+
+  header.addEventListener("click", function () {
+    var isHidden = box.style.display === "none";
+    box.style.display = isHidden ? "" : "none";
+  });
+
+  return wrap;
+}
+
+function renderGamesTab(container) {
+  var team = league.teams[MY_TEAM_INDEX];
+  var total = team.gameLog.length;
+
+  var progress = document.createElement("p");
+  progress.className = "games-progress";
+  progress.textContent = revealedGames + " / " + total + "試合を消化";
+  container.appendChild(progress);
+
+  if (revealedGames < total) {
+    var controls = document.createElement("div");
+    controls.className = "games-controls";
+
+    GAMES_ADVANCE_STEPS.forEach(function (step) {
+      var btn = document.createElement("button");
+      btn.className = "games-advance-btn";
+      btn.textContent = step + "試合進める";
+      btn.addEventListener("click", function () { advanceRevealedGames(step); });
+      controls.appendChild(btn);
+    });
+
+    var allBtn = document.createElement("button");
+    allBtn.className = "games-advance-btn games-advance-btn--all";
+    allBtn.textContent = "シーズン終わりまで見る";
+    allBtn.addEventListener("click", function () { advanceRevealedGames(total - revealedGames); });
+    controls.appendChild(allBtn);
+
+    container.appendChild(controls);
+  }
+
+  if (revealedGames === 0) {
+    var empty = document.createElement("p");
+    empty.className = "games-empty";
+    empty.textContent = "「1試合進める」を押すと、最初の試合の結果が見られます。";
+    container.appendChild(empty);
+    return;
+  }
+
+  var list = document.createElement("div");
+  list.className = "game-log";
+  // 直近の試合ほど上に来るよう新しい順に並べる。一番上（直近）だけ
+  // 最初から展開し、それより前の試合はスコアだけ見せて、
+  // タップすると個人成績を開閉できるようにする。
+  for (var i = revealedGames - 1; i >= 0; i--) {
+    list.appendChild(renderGameEntry(team.gameLog[i], i + 1, i === revealedGames - 1));
+  }
+  container.appendChild(list);
 }
 
 // FA市場タブでのオフシーズン経過（週）。スライダーで動かして、
@@ -588,6 +705,7 @@ function renderRotationTab(container) {
 var TABS = [
   { id: "team", label: "自チーム", render: renderTeamTab },
   { id: "rotation", label: "出場時間", render: renderRotationTab },
+  { id: "games", label: "試合結果", render: renderGamesTab },
   { id: "standings", label: "順位表", render: renderStandingsTab },
   { id: "contracts", label: "契約更改", render: renderContractsTab },
   { id: "fa-market", label: "FA市場", render: renderFaMarketTab }
@@ -624,6 +742,13 @@ var currentSeason = 1;
 // FA獲得ができる。試合中（オフシーズンでない間）はどちらもできない。
 var inOffseason = false;
 
+// 追加段階B-2: 今シーズンの自チームの試合(league.teams[MY_TEAM_INDEX].gameLog、
+// 36試合)のうち、何試合目まで「試合結果」タブで見終えたか。試合そのものは
+// シーズン開始時に全部計算済みなので、これは表示の進み具合だけを表す
+// （見ていない試合があっても他のタブの数字は最終結果のまま）。
+// シーズン開始のたびに0へ戻す。
+var revealedGames = 0;
+
 function renderSeasonLabel() {
   document.getElementById("season-label").textContent = "シーズン" + currentSeason;
 }
@@ -647,7 +772,7 @@ function updateAdvanceButtonState() {
 // 現在の状態をlocalStorageに保存する。状態が変わる操作（シーズン進行・
 // 契約更改・FA獲得・やり直し）の最後に必ず呼ぶ。
 function persist() {
-  saveGame(league, currentSeason, inOffseason);
+  saveGame(league, currentSeason, inOffseason, revealedGames);
 }
 
 // 「次のシーズンへ進む」（シーズン中に押したとき）。
@@ -676,6 +801,7 @@ function startSeason() {
   playSeason(league.teams);
   currentSeason++;
   inOffseason = false;
+  revealedGames = 0;
 
   persist();
   renderSeasonLabel();
@@ -755,6 +881,7 @@ function startNewGame() {
   playSeason(league.teams);
   currentSeason = 1;
   inOffseason = false;
+  revealedGames = 0;
   faOffseasonWeek = 0;
   currentTabId = TABS[0].id;
 
@@ -771,9 +898,14 @@ function init() {
     league = saved.league;
     currentSeason = saved.currentSeason;
     inOffseason = !!saved.inOffseason;
+    // 旧セーブ（B-2より前）にはrevealedGamesが無い。試合の進行という概念が
+    // 無かった頃のセーブなので、見終わった扱い（36）にしておく
+    // （0のままだと「0/36試合」という不自然な表示になってしまう）。
+    revealedGames = typeof saved.revealedGames === "number" ? saved.revealedGames : 36;
   } else {
     league = setupLeague();
     playSeason(league.teams); // 順位表・年俸(前年成績ベース)に使う結果を1シーズン分作っておく
+    revealedGames = 0;
     persist();
   }
 
