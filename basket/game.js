@@ -1358,6 +1358,91 @@ function verifyPopulationStability(trials, seasons) {
   );
 }
 
+// looksLikeValidPlayer()が実際に「壊れた/古いセーブ」を弾けているかを確認する。
+// SAVE_KEYを上げ忘れたときの最後の砦なので、この関数自体にも検査を用意した
+// （v2→v3のexperience上げ忘れ不具合を受けて追加。下のverifyNoNaNAcrossSeasonsは
+// フィールド抜けを直接は再現しないので、ここで別に確認する）。
+function verifySaveValidation() {
+  console.log("\n=== looksLikeValidPlayer()の検査もれチェック ===");
+
+  var base = makePlayer(0);
+  var results = [
+    ["正常な選手", base, true],
+    ["positionsが無い", (function () { var p = makePlayer(0); delete p.positions; return p; })(), false],
+    ["rotationが無い", (function () { var p = makePlayer(0); delete p.rotation; return p; })(), false],
+    ["rotation.minutesが無い", (function () { var p = makePlayer(0); delete p.rotation.minutes; return p; })(), false],
+    ["contractYearsが無い", (function () { var p = makePlayer(0); delete p.contractYears; return p; })(), false],
+    ["experienceが無い（A-4以前の旧セーブ相当）", (function () { var p = makePlayer(0); delete p.experience; return p; })(), false],
+    ["experienceがNaN", (function () { var p = makePlayer(0); p.experience = NaN; return p; })(), false]
+  ];
+
+  var allOk = true;
+  results.forEach(function (r) {
+    var label = r[0], player = r[1], expected = r[2];
+    var actual = looksLikeValidPlayer(player);
+    var ok = actual === expected;
+    if (!ok) allOk = false;
+    console.log("  " + (ok ? "OK" : "NG") + ": " + label + " → " + (expected ? "有効" : "無効") + "と判定されるべき（実際: " + (actual ? "有効" : "無効") + "）");
+  });
+
+  console.log(allOk ? "全項目OK" : "問題あり（上記NGを確認）");
+}
+
+// 実際のプレイに近い形（advanceSeason→runContractDecisions→playSeasonを
+// 繰り返す）で複数シーズン回し、選手の能力・経験値やチームの得点等に
+// NaNが紛れ込んでいないかを確認する。v2→v3のexperience不具合は「古い
+// セーブを読み込んだ場合」にしか起きないため、この関数はその不具合自体は
+// 再現しない（fresh setupLeague()はexperience=0で始まるため）。今後、
+// 新しいフィールドの初期化漏れなど別の原因でNaNが出た場合に、症状（NaN）
+// の面から広く検出するための保険として用意した。
+// game.js単体（node game.js）で動かせるよう、プレイヤーのチームを表す
+// MY_TEAM_INDEX（ui.js側の定数）には依存しない。ここでは全チームをAI
+// 扱いにして契約更改を回す（-1はどのチームとも一致しないインデックス）。
+function verifyNoNaN(seasons) {
+  console.log("\n=== NaN混入チェック（" + seasons + "シーズン、実プレイに近い流れ） ===");
+
+  var league = setupLeague();
+  var problems = [];
+  var noMyTeam = -1;
+
+  for (var s = 0; s < seasons; s++) {
+    advanceSeason(league);
+    processExpiredAiContracts(league, noMyTeam);
+    enforceSalaryCap(league, noMyTeam);
+    resetRecords(league.teams);
+    playSeason(league.teams);
+
+    league.teams.forEach(function (team, ti) {
+      ["wins", "losses", "pointsFor", "pointsAgainst"].forEach(function (key) {
+        if (typeof team[key] !== "number" || isNaN(team[key])) {
+          problems.push("シーズン" + (s + 1) + " " + team.name + "." + key + " = " + team[key]);
+        }
+      });
+      team.roster.forEach(function (p) {
+        ["two", "three", "drib", "reb", "defe", "age", "experience", "contractSalary"].forEach(function (key) {
+          if (typeof p[key] !== "number" || isNaN(p[key])) {
+            problems.push("シーズン" + (s + 1) + " " + team.name + " " + p.name + "." + key + " = " + p[key]);
+          }
+        });
+        if (p.stats) {
+          ["points", "rebounds", "assists", "steals"].forEach(function (key) {
+            if (typeof p.stats[key] !== "number" || isNaN(p.stats[key])) {
+              problems.push("シーズン" + (s + 1) + " " + team.name + " " + p.name + ".stats." + key + " = " + p.stats[key]);
+            }
+          });
+        }
+      });
+    });
+  }
+
+  if (problems.length === 0) {
+    console.log(seasons + "シーズンぶん、NaN混入なし");
+  } else {
+    console.log(problems.length + "件のNaN/非数値を検出:");
+    problems.slice(0, 10).forEach(function (p) { console.log("  " + p); });
+  }
+}
+
 // セーブデータの読み書き（localStorage）。
 // キーは1つにまとめ、バージョン番号を入れる（DESIGN.md「保存」参照）。
 // 仕様変更で古いセーブと形が合わなくなったら、SAVE_KEYの末尾を
@@ -1369,9 +1454,18 @@ function verifyPopulationStability(trials, seasons) {
 // v2に上げるのと合わせて、下のlooksLikeValidPlayer()で選手の形も
 // 確認するようにした（次に同じ上げ忘れをしても、真っ白な画面や
 // クラッシュではなく新規開始に落ちるようにするための保険）。
+//
+// v2→v3: 追加段階A-4でplayer.experienceを追加したときも同じ上げ忘れを
+// していた。v2のままのSAVE_KEYだと、experienceが無い古いセーブを読み込んだ
+// 場合にlooksLikeValidPlayer()もそれをすり抜けてしまい（experienceを
+// 確認していなかったため）、accumulateExperience()の`player.experience +=
+// ...`がundefined+数値=NaNを作り、次シーズンのgrowPlayer()でNaNが能力値に
+// 伝播する不具合があった（試合結果タブでシーズン2から得点・成績がすべて
+// NaNになる形で発覚）。v3に上げ、looksLikeValidPlayer()にexperienceと
+// rotation.minutesの数値チェックを追加した。
 // localStorageはブラウザにしか無いので、関数の中でだけ参照する
 // （node game.jsで動かすconsole確認では呼ばれないようにする）。
-var SAVE_KEY = "basket_save_v2";
+var SAVE_KEY = "basket_save_v3";
 
 function saveGame(league, currentSeason, inOffseason, revealedGames) {
   var payload = {
@@ -1395,8 +1489,10 @@ function looksLikeValidPlayer(player) {
   return !!player &&
     Array.isArray(player.positions) && player.positions.length > 0 &&
     !!player.rotation && typeof player.rotation === "object" &&
+    typeof player.rotation.minutes === "number" && !isNaN(player.rotation.minutes) &&
     typeof player.contractYears === "number" &&
-    typeof player.contractSalary === "number";
+    typeof player.contractSalary === "number" &&
+    typeof player.experience === "number" && !isNaN(player.experience);
 }
 
 // 保存データを読み込む。無い/壊れている/形が合わない場合はnullを返し、
@@ -1452,6 +1548,8 @@ function main() {
   console.log("総選手数: " + (league.teams.reduce(function (sum, team) { return sum + team.roster.length; }, 0) + league.freeAgents.length));
 
   verifyPopulationStability(10, 20);
+  verifySaveValidation();
+  verifyNoNaN(20);
 }
 
 // ブラウザでui.jsから読み込まれるとき（後の段階）は自動実行しない。

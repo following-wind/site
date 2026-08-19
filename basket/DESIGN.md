@@ -880,6 +880,23 @@ following-wind-site/basket/
 > **教訓: 選手データに新しいフィールドを追加するときは、SAVE_KEYの
 > バージョンを上げることを毎回セットで確認する。**
 
+> **不具合と対処その2（追加段階B-2で発覚）**: 教訓を書いた後の
+> 追加段階A-4で`player.experience`を追加したときも、同じ上げ忘れを
+> していた。`v2`のままだったため、experienceが無い古いセーブを
+> 読み込んでも`looksLikeValidPlayer()`をすり抜けてしまい
+> （experienceを確認していなかった）、`accumulateExperience()`の
+> `player.experience += ...`が`undefined + 数値 = NaN`を作り、翌シーズンの
+> `growPlayer()`でNaNが能力値に伝播していた。試合結果タブでシーズン2から
+> 得点・個人成績がすべてNaNになる形で発覚（ユーザー報告）。
+> `v2`→`v3`に上げ、`looksLikeValidPlayer()`にexperienceと
+> rotation.minutesの数値チェック（`typeof === "number" && !isNaN(...)`）を
+> 追加した。教訓どおりの手順を踏んでいたはずなのに、A-1/A-2の反省を
+> 別の段階（A-4）に適用し忘れていた、という再発。恒久的な検査として
+> `verifySaveValidation()`（壊れたデータをlooksLikeValidPlayer()が
+> 正しく弾くか）と`verifyNoNaN()`（複数シーズンの実プレイに近い流れで
+> NaNが紛れ込まないか）を追加し、`node game.js`のたびに自動で確認される
+> ようにした。
+
 ---
 
 ## 途中で変更しない数字
