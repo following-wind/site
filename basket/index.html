@@ -635,12 +635,18 @@
     text-decoration: underline;
   }
 
+  /* 「追い風」への文字リンクと見分けがつくよう、枠付きのボタンにする
+     （以前は文字装飾だけで、リンクと区別がつかなかった。誤って
+     サイトへのリンクを押してしまう恐れもあった）。取り消せない操作
+     （セーブデータを消す）なので、他のボタンより控えめな色にしてある。 */
   .restart-btn {
-    background: none;
-    border: none;
-    padding: 0;
-    margin-left: 12px;
-    color: var(--accent);
+    display: inline-block;
+    margin-left: 10px;
+    border: 1px solid var(--border);
+    background: #ffffff;
+    color: var(--text-sub);
+    padding: 5px 12px;
+    border-radius: 14px;
     font-size: inherit;
     font-family: inherit;
     cursor: pointer;
@@ -648,7 +654,8 @@
 
   .restart-btn:hover,
   .restart-btn:focus-visible {
-    text-decoration: underline;
+    border-color: var(--accent);
+    color: var(--accent);
   }
 </style>
 </head>
@@ -667,13 +674,20 @@
   <div id="tab-content"></div>
 </main>
 
-<script src="game.js"></script>
-<script src="ui.js"></script>
-
 <footer>
   <a href="../">追い風</a>
   <button id="restart-btn" class="restart-btn">最初からやり直す</button>
 </footer>
+
+<!--
+  script2つはfooterより後に置かない。ui.jsの末尾で同期的にinit()を呼んで
+  おり、document.getElementById("restart-btn")がその時点で存在する必要が
+  ある。以前footerがscriptより後にあったとき、restart-btnがまだDOMに
+  無く.addEventListener()がnullエラーで失敗し、「最初からやり直す」の
+  クリックが一切反応しない不具合があった（ユーザー報告）。
+-->
+<script src="game.js"></script>
+<script src="ui.js"></script>
 
 </body>
 </html>
