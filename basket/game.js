@@ -500,7 +500,7 @@ function setupLeague() {
     var roster = [];
     for (var i = 0; i < 12; i++) roster.push(makePlayer(powerCoefficient));
     ensurePositionCoverage(roster);
-    return { name: name, roster: roster, wins: 0, losses: 0, powerCoefficient: powerCoefficient };
+    return { name: name, roster: roster, wins: 0, losses: 0, pointsFor: 0, pointsAgainst: 0, gameLog: [], powerCoefficient: powerCoefficient };
   });
 
   var freeAgents = [];
@@ -617,15 +617,41 @@ function overallRating(rating) {
 // 両チームの3P依存度の平均に比例してノイズの標準偏差を決める。
 var THREE_POINT_VARIANCE_SCALE = 0.18;
 
-// 総当たり12回戦（4チームなので、各ペアが12試合ずつ = 6ペア×12 = 72試合）
-// 1試合の勝率 = 自チーム総合値 / (自チーム総合値 + 相手チーム総合値)に、
-// 3P依存度によるブレを乗せたもの。
+// 総当たり12回戦（4チームなので、各ペアが12試合ずつ = 6ペア×12 = 72試合）。
+// 追加段階B-1から、シーズン合計を一括計算するのではなく、1試合ずつ
+// 得点・個人成績を作って積み上げる方式にした。全チーム分を同じ方法で
+// 計算する（AIチームの選手も同じ積み上げ。FA市場の要求額は成績から
+// 決まるため、チームによって計算方法を変えると不公平になる）。実際に
+// 画面で1試合ずつ表示するのは自チーム分だけで、計算と表示は分ける
+// （team.gameLogは全チームぶん作るが、参照するかどうかは呼び出し側次第）。
+//   1. 勝敗: 自チーム総合値/(自チーム総合値+相手チーム総合値)の勝率に
+//      3P依存度によるブレを乗せて乱数で決定（従来のまま変更していない）
+//   2. 得点: 決まった勝敗と矛盾しないよう、チームの基礎レート＋乱数で
+//      後から生成する（generateGameScores）
+//   3. 個人成績: その試合の得点・リバウンド等のチーム合計を、出場時間比率
+//      （べき乗圧縮済み）×能力×専門外ペナルティの重みで選手に配分する
 function playSeason(teams) {
   teams.forEach(ensureCompleteRotation);
-  teams.forEach(computeSeasonStats);
-  // このシーズンの出場時間を経験値として積む（A-4）。翌シーズンの
-  // advanceSeason()でのgrowPlayer()に反映される。
-  teams.forEach(function (team) { team.roster.forEach(accumulateExperience); });
+
+  var dampenedSharesByTeam = [];
+  var penaltiesByTeam = [];
+  var carryByTeam = [];
+  teams.forEach(function (team, idx) {
+    var shares = computePlayingTimeShares(team.roster);
+    dampenedSharesByTeam[idx] = shares.map(function (s) { return Math.pow(s, PLAYING_TIME_SHARE_DAMPING); });
+    penaltiesByTeam[idx] = team.roster.map(playerPositionPenalty);
+    carryByTeam[idx] = {
+      points: team.roster.map(function () { return 0; }),
+      rebounds: team.roster.map(function () { return 0; }),
+      assists: team.roster.map(function () { return 0; }),
+      steals: team.roster.map(function () { return 0; })
+    };
+
+    team.gameLog = [];
+    team.roster.forEach(function (p, i) {
+      p.stats = { playingTimeShare: shares[i], points: 0, rebounds: 0, assists: 0, steals: 0 };
+    });
+  });
 
   for (var a = 0; a < teams.length; a++) {
     for (var b = a + 1; b < teams.length; b++) {
@@ -633,23 +659,61 @@ function playSeason(teams) {
       var teamB = teams[b];
       var ratingA = computeTeamRating(teamA.roster);
       var ratingB = computeTeamRating(teamB.roster);
-      var scoreA = overallRating(ratingA);
-      var scoreB = overallRating(ratingB);
-      var baseWinRateA = scoreA / (scoreA + scoreB);
+      var scoreRatingA = overallRating(ratingA);
+      var scoreRatingB = overallRating(ratingB);
+      var baseWinRateA = scoreRatingA / (scoreRatingA + scoreRatingB);
       var varianceScale = THREE_POINT_VARIANCE_SCALE * (ratingA.threeReliance + ratingB.threeReliance) / 2;
+
+      var baseRatesA = gameBaseRates(teamA.roster);
+      var baseRatesB = gameBaseRates(teamB.roster);
 
       for (var game = 0; game < 12; game++) {
         var gameWinRateA = clamp(baseWinRateA + randNormal(0, varianceScale), 0.02, 0.98);
-        if (Math.random() < gameWinRateA) {
+        var winnerIsA = Math.random() < gameWinRateA;
+
+        var scores = generateGameScores(baseRatesA, baseRatesB, winnerIsA);
+        var gameTotalsA = {
+          points: scores.scoreA,
+          rebounds: noisyGameTotal(baseRatesA.rebounds),
+          assists: noisyGameTotal(baseRatesA.assists),
+          steals: noisyGameTotal(baseRatesA.steals)
+        };
+        var gameTotalsB = {
+          points: scores.scoreB,
+          rebounds: noisyGameTotal(baseRatesB.rebounds),
+          assists: noisyGameTotal(baseRatesB.assists),
+          steals: noisyGameTotal(baseRatesB.steals)
+        };
+
+        var gameStatsA = computeGameStats(teamA.roster, gameTotalsA, dampenedSharesByTeam[a], penaltiesByTeam[a], carryByTeam[a]);
+        var gameStatsB = computeGameStats(teamB.roster, gameTotalsB, dampenedSharesByTeam[b], penaltiesByTeam[b], carryByTeam[b]);
+
+        accumulateGameStatsIntoRoster(teamA.roster, gameStatsA);
+        accumulateGameStatsIntoRoster(teamB.roster, gameStatsB);
+
+        if (winnerIsA) {
           teamA.wins++;
           teamB.losses++;
         } else {
           teamB.wins++;
           teamA.losses++;
         }
+        teamA.pointsFor += scores.scoreA;
+        teamA.pointsAgainst += scores.scoreB;
+        teamB.pointsFor += scores.scoreB;
+        teamB.pointsAgainst += scores.scoreA;
+
+        teamA.gameLog.push({ opponent: teamB.name, myScore: scores.scoreA, oppScore: scores.scoreB, win: winnerIsA, players: buildBoxScore(teamA.roster, gameStatsA) });
+        teamB.gameLog.push({ opponent: teamA.name, myScore: scores.scoreB, oppScore: scores.scoreA, win: !winnerIsA, players: buildBoxScore(teamB.roster, gameStatsB) });
       }
     }
   }
+
+  teams.forEach(function (team) { shuffleArray(team.gameLog); });
+
+  // このシーズンの出場時間を経験値として積む（A-4）。翌シーズンの
+  // advanceSeason()でのgrowPlayer()に反映される。
+  teams.forEach(function (team) { team.roster.forEach(accumulateExperience); });
 }
 
 function average(roster, key) {
@@ -667,18 +731,41 @@ function weightedAverage(roster, key) {
   return sum / totalMinutes;
 }
 
-// チーム全体のシーズン合計（得点・リバウンド・アシスト・スティール）。
-// 追加段階A-3から、チーム平均ではなく出場時間で重み付けした平均を使う
-// （出場していない選手はチームの数字に反映されなくなる）。
-// 係数はNBA的な1試合あたりの数字感（得点100前後、リバウンド40台など）に
-// 大まかに合わせただけの目安。
-function computeTeamSeasonTotals(roster) {
+// 1試合あたりのチーム平均（得点・リバウンド・アシスト・スティール）。
+// 追加段階B-1から、シーズン合計を先に計算するのではなく、この1試合分の
+// 平均に試合ごとの乱数を乗せてから36試合ぶん積み上げる方式にした
+// （旧SEASON_GAMES倍していた係数と同じ係数を1試合分として使うだけなので、
+// 平均は変わらない）。係数自体はNBA的な1試合あたりの数字感
+// （得点90〜100前後、リバウンド40台など）に大まかに合わせただけの目安。
+function gameBaseRates(roster) {
   return {
-    points: Math.round(SEASON_GAMES * (weightedAverage(roster, "two") * 0.9 + weightedAverage(roster, "three") * 0.7)),
-    rebounds: Math.round(SEASON_GAMES * weightedAverage(roster, "reb") * 0.7),
-    assists: Math.round(SEASON_GAMES * weightedAverage(roster, "drib") * 0.4),
-    steals: Math.round(SEASON_GAMES * weightedAverage(roster, "defe") * 0.12)
+    points: weightedAverage(roster, "two") * 0.9 + weightedAverage(roster, "three") * 0.7,
+    rebounds: weightedAverage(roster, "reb") * 0.7,
+    assists: weightedAverage(roster, "drib") * 0.4,
+    steals: weightedAverage(roster, "defe") * 0.12
   };
+}
+
+// 得点は勝敗と矛盾しないよう後から生成する（乱数の入れ方の方針: 勝敗の
+// 決め方自体は変えず、決まった勝敗に得点を合わせる）。負けチームの点が
+// 上回った場合だけ、僅差になるよう勝ちチームの点を底上げする。
+var GAME_SCORE_NOISE_SD = 8;
+
+function generateGameScores(baseRatesA, baseRatesB, winnerIsA) {
+  var scoreA = Math.max(40, Math.round(baseRatesA.points + randNormal(0, GAME_SCORE_NOISE_SD)));
+  var scoreB = Math.max(40, Math.round(baseRatesB.points + randNormal(0, GAME_SCORE_NOISE_SD)));
+  if (winnerIsA && scoreA <= scoreB) scoreA = scoreB + 1 + Math.floor(Math.random() * 8);
+  if (!winnerIsA && scoreB <= scoreA) scoreB = scoreA + 1 + Math.floor(Math.random() * 8);
+  return { scoreA: scoreA, scoreB: scoreB };
+}
+
+// リバウンド・アシスト・スティールは勝敗と紐付ける必要が無いので、
+// 基礎レートに相対的な乱数を乗せるだけの試合ごとのブレを持たせる。
+var GAME_STAT_NOISE_RELATIVE_SD = 0.15;
+
+function noisyGameTotal(base) {
+  var factor = clamp(1 + randNormal(0, GAME_STAT_NOISE_RELATIVE_SD), 0.5, 1.8);
+  return Math.max(0, Math.round(base * factor));
 }
 
 // 選手ごとの出場時間の割合（チーム内で合計1になる）。
@@ -702,17 +789,37 @@ function playerPositionPenalty(player) {
 }
 
 // 「重みの比率どおりにtotalを配る」だけの関数。得点・リバウンド・
-// アシスト・スティールの4項目で使い回す。
-function distributeByWeight(weights, total) {
+// アシスト・スティールの4項目で使い回す。四捨五入の端数は一番重みが
+// 大きい選手に寄せ、配分の合計が必ずtotalと一致するようにする
+// （追加段階B-1から: 試合の総得点と選手ごとの得点合計を一致させるため）。
+//
+// carry（省略可）を渡すと、丸めで切り捨てた端数を次回の呼び出しに持ち越す
+// （誤差拡散）。出場時間が少ない選手は1試合あたりの取り分が0.3のような
+// 小数になり、試合ごとに毎回0へ丸めると36試合積み上げても0のままになり、
+// 本来の値（0.3×36≒11）より不当に低くなってしまう不具合があった
+// （overallとperceivedOverallの相関が0.85前後→0.71〜0.80まで低下して発覚）。
+// carryに端数を残しておき次の試合の値に足すことで、丸めても長期的には
+// 本来の合計に収束する（1試合ごとの表示は整数のまま保てる）。
+function distributeByWeight(weights, total, carry) {
   var sum = weights.reduce(function (s, w) { return s + w; }, 0);
   if (sum <= 0) return weights.map(function () { return 0; });
-  return weights.map(function (w) { return Math.round(total * w / sum); });
+
+  var raw = weights.map(function (w, i) { return total * w / sum + (carry ? carry[i] : 0); });
+  var rounded = raw.map(function (v) { return Math.round(v); });
+  var diff = total - rounded.reduce(function (s, v) { return s + v; }, 0);
+  if (diff !== 0) {
+    var maxIndex = 0;
+    for (var i = 1; i < weights.length; i++) {
+      if (weights[i] > weights[maxIndex]) maxIndex = i;
+    }
+    rounded[maxIndex] += diff;
+  }
+  if (carry) {
+    for (var j = 0; j < weights.length; j++) carry[j] = raw[j] - rounded[j];
+  }
+  return rounded;
 }
 
-// 1チーム分の個人成績（シーズン合計）を計算し、各選手のstatsに書き込む。
-// 得点は2P・3P、リバウンドはリバウンド、アシストはドリブル、
-// スティールはディフェンスの能力から作る。保存するのはシーズン合計だけ。
-// 追加段階A-3から、出場時間の実配分と専門外ポジションのペナルティを反映する。
 // 出場時間の比率をそのまま重みに使うと、ポジションの手薄さ（たまたま
 // 同じポジションに競合が少ない）による偏りが能力より支配的になり、
 // 能力と成績の相関が0.87前後→0.37まで崩れた（60リーグ試行で確認）。
@@ -720,13 +827,13 @@ function distributeByWeight(weights, total) {
 // 安く済む」効果は残しつつ、ポジション運の影響を弱める）。
 var PLAYING_TIME_SHARE_DAMPING = 0.2;
 
-function computeSeasonStats(team) {
-  var roster = team.roster;
-  var totals = computeTeamSeasonTotals(roster);
-  var playingTimeShares = computePlayingTimeShares(roster);
-  var dampenedShares = playingTimeShares.map(function (share) { return Math.pow(share, PLAYING_TIME_SHARE_DAMPING); });
-  var penalties = roster.map(playerPositionPenalty);
-
+// 1試合分の個人成績を計算する。得点は2P・3P、リバウンドはリバウンド、
+// アシストはドリブル、スティールはディフェンスの能力から作る。
+// dampenedShares・penaltiesはシーズン中変わらないので、呼び出し側
+// (playSeason)で1回だけ計算したものを毎試合渡す。carryは4項目分の
+// 誤差拡散の持ち越し配列（呼び出し側がチームごとに1つ持ち、毎試合
+// 使い回す。distributeByWeight側で更新される）。
+function computeGameStats(roster, gameTotals, dampenedShares, penalties, carry) {
   var pointsWeights = roster.map(function (p, i) {
     return dampenedShares[i] * (p.two * 0.9 + p.three * 0.7) * penalties[i];
   });
@@ -734,20 +841,44 @@ function computeSeasonStats(team) {
   var assistWeights = roster.map(function (p, i) { return dampenedShares[i] * p.drib * penalties[i]; });
   var stealWeights = roster.map(function (p, i) { return dampenedShares[i] * p.defe * penalties[i]; });
 
-  var points = distributeByWeight(pointsWeights, totals.points);
-  var rebounds = distributeByWeight(reboundWeights, totals.rebounds);
-  var assists = distributeByWeight(assistWeights, totals.assists);
-  var steals = distributeByWeight(stealWeights, totals.steals);
+  return {
+    points: distributeByWeight(pointsWeights, gameTotals.points, carry.points),
+    rebounds: distributeByWeight(reboundWeights, gameTotals.rebounds, carry.rebounds),
+    assists: distributeByWeight(assistWeights, gameTotals.assists, carry.assists),
+    steals: distributeByWeight(stealWeights, gameTotals.steals, carry.steals)
+  };
+}
 
+function accumulateGameStatsIntoRoster(roster, gameStats) {
   roster.forEach(function (player, i) {
-    player.stats = {
-      playingTimeShare: playingTimeShares[i],
-      points: points[i],
-      rebounds: rebounds[i],
-      assists: assists[i],
-      steals: steals[i]
+    player.stats.points += gameStats.points[i];
+    player.stats.rebounds += gameStats.rebounds[i];
+    player.stats.assists += gameStats.assists[i];
+    player.stats.steals += gameStats.steals[i];
+  });
+}
+
+// 試合結果の表示用に、選手ごとの当該試合の成績だけを取り出す
+// （能力など他のフィールドは持たせない軽量なスナップショット）。
+function buildBoxScore(roster, gameStats) {
+  return roster.map(function (p, i) {
+    return {
+      name: p.name,
+      points: gameStats.points[i],
+      rebounds: gameStats.rebounds[i],
+      assists: gameStats.assists[i],
+      steals: gameStats.steals[i]
     };
   });
+}
+
+function shuffleArray(list) {
+  for (var i = list.length - 1; i > 0; i--) {
+    var j = Math.floor(Math.random() * (i + 1));
+    var tmp = list[i];
+    list[i] = list[j];
+    list[j] = tmp;
+  }
 }
 
 function avgStat(list, statKey) {
@@ -835,7 +966,13 @@ function performanceIndex(stats) {
 // 能力と無関係な運が支配的になっていたため）。PLAYING_TIME_SHARE_DAMPING
 // で出場時間比率の影響を圧縮し直した後、この値を測り直した
 // （相関係数は0.85前後まで回復。下のverifySalaryDivergence参照）。
-var PERFORMANCE_CALIBRATION = { meanOverall: 67.0, sdOverall: 10.4, meanPerf: 690.6, sdPerf: 137.6 };
+//
+// 追加段階B-1で1試合ずつ積み上げる方式に変えたところ、meanPerfが
+// 690.6→約704まで動いた（試合ごとの乱数と、丸めの誤差拡散(carry)を
+// 導入したことによる分布の変化）。ズレたままだとz-scoreが常に少し
+// 高めに出て「割高」が29%→39%まで増えていたため、実測値に合わせて
+// 測り直した（200リーグ分・9600人で確認。相関係数は0.83前後）。
+var PERFORMANCE_CALIBRATION = { meanOverall: 66.9, sdOverall: 10.65, meanPerf: 704.4, sdPerf: 137.1 };
 
 // 要求額は能力そのものではなく前年の成績で決まる。
 // 出場時間の運で成績が能力より良く/悪く出た選手は、そのまま
@@ -1145,6 +1282,8 @@ function resetRecords(teams) {
   teams.forEach(function (team) {
     team.wins = 0;
     team.losses = 0;
+    team.pointsFor = 0;
+    team.pointsAgainst = 0;
   });
 }
 
