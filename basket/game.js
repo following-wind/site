@@ -515,6 +515,19 @@ var SEASON_GAMES = 36;
 // 選手には触れず、空いているポジション（0分のまま）だけを、まだ配分の
 // 無い選手で埋める。空いたポジションごとに一番能力の高い未配置選手を
 // 割り当て、そのポジションを丸ごと任せる（48分）。
+//
+// 不具合と対処（B-2の実プレイで発覚）: 「未配置」の判定が
+// `!p.rotation.position || p.rotation.minutes === 0` だったため、
+// ユーザーが出場時間タブで意図的に0分へ落とした選手（ポジションは
+// 設定済み・出場時間だけ0）まで「未配置」とみなしてしまっていた。
+// その選手がポジションの唯一の担当者だった場合、そのポジションが
+// 「空き」と判定され、この関数がその選手自身（か能力最高の候補）を
+// 48分で再配置してしまい、ベンチに落としたはずの選手が実際の試合で
+// 出場時間を持ってしまう不具合があった（ユーザー報告: 出場時間0分に
+// 設定した選手が試合で得点を記録）。「一部だけ手動で決めていれば、
+// その決定を壊さず空きだけ埋める」という本来の設計方針どおり、
+// ポジションが一度も設定されていない選手（position===null）だけを
+// 「未配置」として扱うよう修正した。
 function fillMissingRotation(roster) {
   var missingPositions = POSITION_ORDER.filter(function (position) {
     return positionMinutesUsed(roster, position) === 0;
@@ -522,7 +535,7 @@ function fillMissingRotation(roster) {
   if (missingPositions.length === 0) return;
 
   var available = roster
-    .filter(function (p) { return !p.rotation.position || p.rotation.minutes === 0; })
+    .filter(function (p) { return !p.rotation.position; })
     .sort(function (a, b) { return overall(b) - overall(a); });
 
   var positionsByScarcity = missingPositions.slice().sort(function (a, b) {
@@ -1639,6 +1652,110 @@ function verifyGameConsistency(trials) {
   finalMismatch.slice(0, 5).forEach(function (p) { console.log("  " + p); });
 }
 
+// 出場時間0の選手の成績が本当に0のままかを確認する（ユーザー指示。
+// A-1〜A-4・B-1〜B-2の目的そのものなので恒久検査として置く）。
+// 「あるポジションの唯一の担当者をベンチに落とす」という、実際に不具合が
+// 起きたシナリオをそのまま再現する: fillMissingRotation()が「未配置」の
+// 判定を誤って、この選手（ポジションの唯一の担当者）を「空いている
+// ポジション」を埋める候補とみなし、48分で出場させ直してしまっていた
+// （ユーザー報告: 出場時間0分に設定した選手が試合で得点を記録）。
+function verifyZeroMinutesZeroStats(trials) {
+  console.log("\n=== 出場時間0の選手の成績が0のままか確認（" + trials + "試行） ===");
+
+  var problems = [];
+  var tested = 0;
+
+  for (var t = 0; t < trials; t++) {
+    var league = setupLeague();
+    var team = league.teams[0];
+    autoFillRotation(team.roster);
+
+    // ポジションの唯一の担当者を探す
+    var target = null;
+    POSITION_ORDER.some(function (position) {
+      var starters = team.roster.filter(function (p) { return p.rotation.position === position && p.rotation.minutes > 0; });
+      if (starters.length === 1) { target = starters[0]; return true; }
+      return false;
+    });
+    if (!target) continue; // このロースターでは唯一の担当者がいなかった（稀）
+    tested++;
+
+    target.rotation.minutes = 0; // ベンチに落とす（ポジションはそのまま）
+
+    league.teams.forEach(function (tm) { if (tm !== team) autoFillRotation(tm.roster); });
+    resetRecords(league.teams);
+    playSeason(league.teams);
+
+    if (target.rotation.minutes !== 0) {
+      problems.push(target.name + ": ensureCompleteRotation後にrotation.minutesが" + target.rotation.minutes + "に戻された");
+    }
+    if (target.stats.points !== 0 || target.stats.rebounds !== 0 || target.stats.assists !== 0 || target.stats.steals !== 0) {
+      problems.push(target.name + ": シーズン成績が0になっていない " + JSON.stringify(target.stats));
+    }
+    team.gameLog.forEach(function (g, gi) {
+      var bp = g.players.filter(function (p) { return p.name === target.name; })[0];
+      if (bp && (bp.points !== 0 || bp.rebounds !== 0 || bp.assists !== 0 || bp.steals !== 0)) {
+        problems.push(target.name + " 第" + (gi + 1) + "試合: " + JSON.stringify(bp));
+      }
+    });
+  }
+
+  console.log(tested + "試行で確認（唯一の担当者が見つからなかった試行は除く）");
+  console.log(problems.length === 0 ? "OK: 出場時間0の選手の成績は全試合・シーズン合計とも0" : "NG: " + problems.length + "件");
+  problems.slice(0, 10).forEach(function (p) { console.log("  " + p); });
+}
+
+// 同程度の能力なら、出場時間が多い選手の方が成績が高くなるかを確認する
+// （ユーザー指示。乱数を含むため単発では信頼できず、複数試行の平均・
+// 「上回った割合」で見る＝この一連の作業を通して繰り返してきた検証方針）。
+// ロースターの先頭2人の能力を完全にそろえ、出場時間だけ大きく差を
+// つける（同じポジションを取り合う他の選手は0分にしておき、
+// 出場時間の差以外の要因を極力排除する）。
+function verifyMoreMinutesMoreStats(trials) {
+  console.log("\n=== 出場時間が多い方が成績が高くなるか確認（能力をそろえた2人、" + trials + "試行） ===");
+
+  var diffs = [];
+  for (var t = 0; t < trials; t++) {
+    var league = setupLeague();
+    var team = league.teams[0];
+    autoFillRotation(team.roster);
+
+    var high = team.roster[0];
+    var low = team.roster[1];
+    ["two", "three", "drib", "reb", "defe"].forEach(function (key) { low[key] = high[key]; });
+    low.type = high.type;
+    low.positions = high.positions;
+    high.rotation = { position: "PG", minutes: 44 };
+    low.rotation = { position: "SG", minutes: 4 };
+    team.roster.forEach(function (p) {
+      if (p !== high && p !== low && (p.rotation.position === "PG" || p.rotation.position === "SG")) {
+        p.rotation.minutes = 0;
+      }
+    });
+
+    league.teams.forEach(function (tm) { if (tm !== team) autoFillRotation(tm.roster); });
+    resetRecords(league.teams);
+    playSeason(league.teams);
+
+    var highTotal = high.stats.points + high.stats.rebounds + high.stats.assists + high.stats.steals;
+    var lowTotal = low.stats.points + low.stats.rebounds + low.stats.assists + low.stats.steals;
+    diffs.push(highTotal - lowTotal);
+  }
+
+  var avgDiff = diffs.reduce(function (s, v) { return s + v; }, 0) / diffs.length;
+  var higherCount = diffs.filter(function (d) { return d > 0; }).length;
+  console.log(
+    "平均差（44分の選手 - 4分の選手、4項目合計） = " + avgDiff.toFixed(1) +
+    " / 44分の選手が上回った試行 = " + higherCount + "/" + diffs.length +
+    "（" + (higherCount / diffs.length * 100).toFixed(1) + "%）"
+  );
+  console.log(
+    (avgDiff > 0 && higherCount / diffs.length > 0.9)
+      ? "OK: 出場時間が多い方が明確に成績が高い"
+      : "NG: 出場時間の差が成績にうまく反映されていない可能性"
+  );
+}
+
 // セーブデータの読み書き（localStorage）。
 // キーは1つにまとめ、バージョン番号を入れる（DESIGN.md「保存」参照）。
 // 仕様変更で古いセーブと形が合わなくなったら、SAVE_KEYの末尾を
@@ -1748,6 +1865,8 @@ function main() {
   verifyNoNaN(20);
   verifyNoNegativeStats(20);
   verifyGameConsistency(30);
+  verifyZeroMinutesZeroStats(30);
+  verifyMoreMinutesMoreStats(200);
 }
 
 // ブラウザでui.jsから読み込まれるとき（後の段階）は自動実行しない。
