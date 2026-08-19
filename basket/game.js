@@ -666,12 +666,14 @@ function playSeason(teams) {
 
       var baseRatesA = gameBaseRates(teamA.roster);
       var baseRatesB = gameBaseRates(teamB.roster);
+      var expectedPointsA = gameExpectedPoints(ratingA, ratingB);
+      var expectedPointsB = gameExpectedPoints(ratingB, ratingA);
 
       for (var game = 0; game < 12; game++) {
         var gameWinRateA = clamp(baseWinRateA + randNormal(0, varianceScale), 0.02, 0.98);
         var winnerIsA = Math.random() < gameWinRateA;
 
-        var scores = generateGameScores(baseRatesA, baseRatesB, winnerIsA);
+        var scores = generateGameScores(expectedPointsA, expectedPointsB, winnerIsA);
         var gameTotalsA = {
           points: scores.scoreA,
           rebounds: noisyGameTotal(baseRatesA.rebounds),
@@ -716,6 +718,28 @@ function playSeason(teams) {
   teams.forEach(function (team) { team.roster.forEach(accumulateExperience); });
 }
 
+// gameLogの先頭count試合ぶんから、勝敗・得点・失点を集計する。
+// count===team.gameLog.lengthのときは、シーズン最終のteam.wins/losses/
+// pointsFor/pointsAgainstと完全に一致する（verifyGameConsistency参照）。
+//
+// 不具合と対処（B-2の実プレイで発覚）: 試合結果タブでは自チームの
+// revealedGames（何試合目まで見たか）ぶんしか見えていないのに、
+// 順位表タブは常にシーズン最終のteam.wins等をそのまま表示していた。
+// これだと「30/36試合を消化」の時点でも最終結果（36試合ぶん）が
+// 見えてしまい、1試合ずつ進める意味が薄れる不具合があった（ユーザー
+// 報告）。順位表側でこの関数を使い、消化した試合数ぶんだけの成績を
+// 表示するようにした。
+function partialRecord(team, count) {
+  var slice = team.gameLog.slice(0, count);
+  var wins = 0, losses = 0, pointsFor = 0, pointsAgainst = 0;
+  slice.forEach(function (g) {
+    if (g.win) wins++; else losses++;
+    pointsFor += g.myScore;
+    pointsAgainst += g.oppScore;
+  });
+  return { wins: wins, losses: losses, pointsFor: pointsFor, pointsAgainst: pointsAgainst };
+}
+
 function average(roster, key) {
   var sum = roster.reduce(function (s, p) { return s + p[key]; }, 0);
   return sum / roster.length;
@@ -731,19 +755,39 @@ function weightedAverage(roster, key) {
   return sum / totalMinutes;
 }
 
-// 1試合あたりのチーム平均（得点・リバウンド・アシスト・スティール）。
+// 1試合あたりのチーム平均（リバウンド・アシスト・スティール）。
 // 追加段階B-1から、シーズン合計を先に計算するのではなく、この1試合分の
 // 平均に試合ごとの乱数を乗せてから36試合ぶん積み上げる方式にした
 // （旧SEASON_GAMES倍していた係数と同じ係数を1試合分として使うだけなので、
 // 平均は変わらない）。係数自体はNBA的な1試合あたりの数字感
-// （得点90〜100前後、リバウンド40台など）に大まかに合わせただけの目安。
+// （リバウンド40台など）に大まかに合わせただけの目安。
+// 得点は勝敗と同じ土台(computeTeamRating)を使うため、この関数からは
+// 分離した（下のgameExpectedPoints参照）。
 function gameBaseRates(roster) {
   return {
-    points: weightedAverage(roster, "two") * 0.9 + weightedAverage(roster, "three") * 0.7,
     rebounds: weightedAverage(roster, "reb") * 0.7,
     assists: weightedAverage(roster, "drib") * 0.4,
     steals: weightedAverage(roster, "defe") * 0.12
   };
+}
+
+// 得点の基準値（自チーム攻撃力 ÷ 相手チーム守備力の比に掛ける）。
+// 攻撃力・守備力は同じ40〜99スケールなので、互角なら比はおよそ1.0になる。
+var SCORE_BASE_PER_GAME = 112;
+
+// 不具合と修正（B-2の実プレイで発覚）: 当初、得点は2P・3Pの単純平均
+// （weightedAverage(roster,"two")等、相手の守備力を一切見ない）で決めて
+// いた。個々の試合では「決まった勝敗より高い点にする」clampで矛盾しない
+// ようにしていたが、勝敗を決めるcomputeTeamRating（攻撃・守備・
+// リバウンドの合成値）とは別の指標だったため、シーズン全体で見ると
+// 勝ち数の順位と得失点差の順位がほとんど無関係になっていた（100リーグ中
+// 52リーグしか1位が一致しない）。守備の強さが「勝つ」ことには効くのに
+// 「相手の得点を抑える」ことには一切効かないのが原因だった（ユーザー
+// 報告: 25勝11敗のチームが得失点差-57など）。得点の基準を「自チーム
+// 攻撃力÷相手チーム守備力」というcomputeTeamRatingと同じ土台に変え、
+// 守備が勝敗と得失点差の両方に効くようにした。
+function gameExpectedPoints(ratingSelf, ratingOpponent) {
+  return SCORE_BASE_PER_GAME * (ratingSelf.offense / ratingOpponent.defense);
 }
 
 // 得点は勝敗と矛盾しないよう後から生成する（乱数の入れ方の方針: 勝敗の
@@ -751,9 +795,9 @@ function gameBaseRates(roster) {
 // 上回った場合だけ、僅差になるよう勝ちチームの点を底上げする。
 var GAME_SCORE_NOISE_SD = 8;
 
-function generateGameScores(baseRatesA, baseRatesB, winnerIsA) {
-  var scoreA = Math.max(40, Math.round(baseRatesA.points + randNormal(0, GAME_SCORE_NOISE_SD)));
-  var scoreB = Math.max(40, Math.round(baseRatesB.points + randNormal(0, GAME_SCORE_NOISE_SD)));
+function generateGameScores(expectedPointsA, expectedPointsB, winnerIsA) {
+  var scoreA = Math.max(40, Math.round(expectedPointsA + randNormal(0, GAME_SCORE_NOISE_SD)));
+  var scoreB = Math.max(40, Math.round(expectedPointsB + randNormal(0, GAME_SCORE_NOISE_SD)));
   if (winnerIsA && scoreA <= scoreB) scoreA = scoreB + 1 + Math.floor(Math.random() * 8);
   if (!winnerIsA && scoreB <= scoreA) scoreB = scoreA + 1 + Math.floor(Math.random() * 8);
   return { scoreA: scoreA, scoreB: scoreB };
@@ -1001,7 +1045,10 @@ function performanceIndex(stats) {
 // 導入したことによる分布の変化）。ズレたままだとz-scoreが常に少し
 // 高めに出て「割高」が29%→39%まで増えていたため、実測値に合わせて
 // 測り直した（200リーグ分・9600人で確認。相関係数は0.83前後）。
-var PERFORMANCE_CALIBRATION = { meanOverall: 66.9, sdOverall: 10.65, meanPerf: 704.4, sdPerf: 137.1 };
+//
+// 得点計算を勝敗と同じ土台(computeTeamRating)に統一したとき（B-2の
+// 不具合修正）、meanPerfが704→717付近まで再び動いたため測り直した。
+var PERFORMANCE_CALIBRATION = { meanOverall: 66.8, sdOverall: 10.75, meanPerf: 716.6, sdPerf: 142.7 };
 
 // 要求額は能力そのものではなく前年の成績で決まる。
 // 出場時間の運で成績が能力より良く/悪く出た選手は、そのまま
@@ -1535,6 +1582,63 @@ function verifyNoNegativeStats(seasons) {
   }
 }
 
+// 試合結果タブ・順位表タブに関する2つの整合性を確認する（ユーザー指示）。
+//   1. 消化試合数(count)と、partialRecord(team, count)のwins+lossesが
+//      一致すること（順位表を「消化した試合数ぶんだけ」で出すための前提）
+//   2. 勝ったチームの得点が負けたチームの得点を必ず上回っていること
+//      （generateGameScores()のclampが実際に効いているか）
+// あわせて、partialRecord(team, 全試合数)がシーズン最終の
+// team.wins/losses/pointsFor/pointsAgainstと完全に一致することも確認する
+// （順位表が消化試合数ぶんの部分集計と最終集計とで食い違わないように）。
+function verifyGameConsistency(trials) {
+  console.log("\n=== 試合結果の整合性チェック（" + trials + "リーグ分） ===");
+
+  var scoreProblems = [];
+  var countProblems = [];
+  var finalMismatch = [];
+
+  for (var t = 0; t < trials; t++) {
+    var league = setupLeague();
+    playSeason(league.teams);
+
+    league.teams.forEach(function (team) {
+      team.gameLog.forEach(function (g, gi) {
+        if (g.win && g.myScore <= g.oppScore) {
+          scoreProblems.push(team.name + " 第" + (gi + 1) + "試合: 勝ちなのに" + g.myScore + "-" + g.oppScore);
+        }
+        if (!g.win && g.myScore >= g.oppScore) {
+          scoreProblems.push(team.name + " 第" + (gi + 1) + "試合: 負けなのに" + g.myScore + "-" + g.oppScore);
+        }
+      });
+
+      [1, 10, 20, team.gameLog.length].forEach(function (count) {
+        var record = partialRecord(team, count);
+        if (record.wins + record.losses !== count) {
+          countProblems.push(team.name + " " + count + "試合消化時点: 勝敗合計" + (record.wins + record.losses) + "が一致しない");
+        }
+      });
+
+      var full = partialRecord(team, team.gameLog.length);
+      if (full.wins !== team.wins || full.losses !== team.losses ||
+          full.pointsFor !== team.pointsFor || full.pointsAgainst !== team.pointsAgainst) {
+        finalMismatch.push(
+          team.name + ": partialRecord(全試合)=" + JSON.stringify(full) +
+          " / シーズン最終値=" + JSON.stringify({ wins: team.wins, losses: team.losses, pointsFor: team.pointsFor, pointsAgainst: team.pointsAgainst })
+        );
+      }
+    });
+  }
+
+  console.log(scoreProblems.length === 0 ? "OK: 全試合で勝ったチームの得点が上回っている" : "NG: " + scoreProblems.length + "件の矛盾");
+  scoreProblems.slice(0, 5).forEach(function (p) { console.log("  " + p); });
+
+  console.log(countProblems.length === 0 ? "OK: 消化試合数と勝敗数の合計が常に一致" : "NG: " + countProblems.length + "件の不一致");
+  countProblems.slice(0, 5).forEach(function (p) { console.log("  " + p); });
+
+  console.log(finalMismatch.length === 0 ? "OK: 全試合消化時点の部分集計がシーズン最終値と完全一致" : "NG: " + finalMismatch.length + "件の不一致");
+  finalMismatch.slice(0, 5).forEach(function (p) { console.log("  " + p); });
+}
+
 // セーブデータの読み書き（localStorage）。
 // キーは1つにまとめ、バージョン番号を入れる（DESIGN.md「保存」参照）。
 // 仕様変更で古いセーブと形が合わなくなったら、SAVE_KEYの末尾を
@@ -1643,6 +1747,7 @@ function main() {
   verifySaveValidation();
   verifyNoNaN(20);
   verifyNoNegativeStats(20);
+  verifyGameConsistency(30);
 }
 
 // ブラウザでui.jsから読み込まれるとき（後の段階）は自動実行しない。

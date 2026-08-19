@@ -122,28 +122,51 @@ function renderTeamTab(container) {
 // 自チームの行は性格名の代わりに「あなた」と表示する。
 // 追加段階B-1で得失点差(pointsFor-pointsAgainst)を積み上げるようにしたので、
 // 同率（勝ち数が同じ）ときのタイブレークに使う。
+//
+// 不具合と対処（B-2の実プレイで発覚）: シーズン中は常にteam.wins等
+// （シーズン最終の値）をそのまま表示していたため、試合結果タブで
+// 「30/36試合を消化」の段階でも順位表には36試合ぶんの最終結果が
+// 見えてしまい、1試合ずつ進める意味が薄れる不具合があった（ユーザー
+// 報告）。partialRecord()で消化した試合数(revealedGames)ぶんだけの
+// 成績を計算して表示するようにした（game.js側の関数、計算はそちらに
+// 置く）。オフシーズン中はそのシーズンの決着がついている（契約更改も
+// 最終成績を基準に行う）ので、消化数によらず最終結果を表示する。
 function renderStandingsTab(container) {
-  var standings = league.teams.slice().sort(function (a, b) {
-    if (b.wins !== a.wins) return b.wins - a.wins;
-    return (b.pointsFor - b.pointsAgainst) - (a.pointsFor - a.pointsAgainst);
+  var revealCount = inOffseason ? Infinity : revealedGames;
+
+  var records = league.teams.map(function (team) {
+    return partialRecord(team, Math.min(revealCount, team.gameLog.length));
+  });
+
+  if (!inOffseason) {
+    var note = document.createElement("p");
+    note.className = "games-progress";
+    note.textContent = revealedGames + " / " + league.teams[MY_TEAM_INDEX].gameLog.length + "試合消化時点の順位";
+    container.appendChild(note);
+  }
+
+  var order = league.teams.map(function (team, i) { return i; }).sort(function (ia, ib) {
+    if (records[ib].wins !== records[ia].wins) return records[ib].wins - records[ia].wins;
+    return (records[ib].pointsFor - records[ib].pointsAgainst) - (records[ia].pointsFor - records[ia].pointsAgainst);
   });
 
   var table = document.createElement("table");
   table.className = "standings";
-  var rowsHtml = standings.map(function (team, index) {
-    var games = team.wins + team.losses;
-    var winRate = games > 0 ? (team.wins / games * 100).toFixed(1) : "0.0";
-    var teamIndex = league.teams.indexOf(team);
+  var rowsHtml = order.map(function (teamIndex, rank) {
+    var team = league.teams[teamIndex];
+    var record = records[teamIndex];
+    var games = record.wins + record.losses;
+    var winRate = games > 0 ? (record.wins / games * 100).toFixed(1) : "0.0";
     var isMine = teamIndex === MY_TEAM_INDEX;
     var personalityLabel = isMine ? "あなた" : PERSONALITY_LABELS[TEAM_PERSONALITIES[teamIndex]];
-    var diff = team.pointsFor - team.pointsAgainst;
+    var diff = record.pointsFor - record.pointsAgainst;
     var diffLabel = (diff > 0 ? "+" : "") + diff;
     return (
       '<tr class="' + (isMine ? "standings-row--mine" : "") + '">' +
-        "<td>" + (index + 1) + "</td>" +
+        "<td>" + (rank + 1) + "</td>" +
         "<td>" + escapeHtml(team.name) + "</td>" +
         "<td>" + escapeHtml(personalityLabel) + "</td>" +
-        "<td>" + team.wins + "勝" + team.losses + "敗</td>" +
+        "<td>" + record.wins + "勝" + record.losses + "敗</td>" +
         "<td>" + winRate + "%</td>" +
         "<td>" + diffLabel + "</td>" +
       "</tr>"
