@@ -789,8 +789,9 @@ function playerPositionPenalty(player) {
 }
 
 // 「重みの比率どおりにtotalを配る」だけの関数。得点・リバウンド・
-// アシスト・スティールの4項目で使い回す。四捨五入の端数は一番重みが
-// 大きい選手に寄せ、配分の合計が必ずtotalと一致するようにする
+// アシスト・スティールの4項目で使い回す。最大剰余方式（floorで切り捨てて
+// から、端数(小数部)が大きい選手から順に+1して合計をtotalに一致させる）
+// で丸め、配分の合計が必ずtotalと一致するようにする
 // （追加段階B-1から: 試合の総得点と選手ごとの得点合計を一致させるため）。
 //
 // carry（省略可）を渡すと、丸めで切り捨てた端数を次回の呼び出しに持ち越す
@@ -800,20 +801,48 @@ function playerPositionPenalty(player) {
 // （overallとperceivedOverallの相関が0.85前後→0.71〜0.80まで低下して発覚）。
 // carryに端数を残しておき次の試合の値に足すことで、丸めても長期的には
 // 本来の合計に収束する（1試合ごとの表示は整数のまま保てる）。
+//
+// 不具合と修正: 当初は端数を「重みが一番大きい選手」に毎回まとめて
+// 寄せていたが、出場時間が固定のシーズン中はその選手がほぼ毎試合同じに
+// なるため、その1人のcarryだけが符号の定まらないランダムウォーク的に
+// ズレ続け、36試合の終盤でスティールが-4になるなど負の値が出る不具合が
+// あった（ユーザー報告、721/51,840件で負の値を確認）。補正先を「その
+// 試合ごとに端数が一番大きい選手」に変える（最大剰余方式）ことで、
+// 補正が特定の1人に偏らず毎試合ローテーションするようにし、carryが
+// 際限なくズレていく問題を解消した。あわせて負のcarryで取り分が0を
+// 下回った選手はfloor段階で0扱いにし、個人成績が負にならないようにした。
 function distributeByWeight(weights, total, carry) {
   var sum = weights.reduce(function (s, w) { return s + w; }, 0);
   if (sum <= 0) return weights.map(function () { return 0; });
 
   var raw = weights.map(function (w, i) { return total * w / sum + (carry ? carry[i] : 0); });
-  var rounded = raw.map(function (v) { return Math.round(v); });
-  var diff = total - rounded.reduce(function (s, v) { return s + v; }, 0);
-  if (diff !== 0) {
-    var maxIndex = 0;
-    for (var i = 1; i < weights.length; i++) {
-      if (weights[i] > weights[maxIndex]) maxIndex = i;
+  var floors = raw.map(function (v) { return Math.max(0, Math.floor(v)); });
+  var remainders = raw.map(function (v, i) { return Math.max(0, v) - floors[i]; });
+
+  var rounded = floors.slice();
+  var shortfall = total - rounded.reduce(function (s, v) { return s + v; }, 0);
+
+  if (shortfall > 0) {
+    // 端数(remainder)が大きい選手から順に+1ずつ配る。
+    // shortfallは各remainderが1未満であることから必ずweights.length未満になる。
+    var addOrder = remainders.map(function (r, i) { return i; })
+      .sort(function (a, b) { return remainders[b] - remainders[a]; });
+    for (var k = 0; k < shortfall; k++) rounded[addOrder[k]] += 1;
+  } else if (shortfall < 0) {
+    // 稀に(下限0の丸め込みで)totalを超えるケース。一番多く配分されている
+    // 選手から順に1ずつ引いて必ずtotalに一致させる（負の値にはしない）。
+    var need = -shortfall;
+    while (need > 0) {
+      var maxIndex = 0;
+      for (var i = 1; i < rounded.length; i++) {
+        if (rounded[i] > rounded[maxIndex]) maxIndex = i;
+      }
+      if (rounded[maxIndex] <= 0) break; // 理論上ここには来ないはずだが念のため
+      rounded[maxIndex] -= 1;
+      need--;
     }
-    rounded[maxIndex] += diff;
   }
+
   if (carry) {
     for (var j = 0; j < weights.length; j++) carry[j] = raw[j] - rounded[j];
   }
@@ -1443,6 +1472,69 @@ function verifyNoNaN(seasons) {
   }
 }
 
+// 実際のプレイに近い形で複数シーズン回し、本来0以上のはずの値（個人成績・
+// チームの勝敗数や得点・能力値など）が負になっていないかを確認する。
+// verifyNoNaN()と同じ形の検査。distributeByWeight()の端数補正を特定の
+// 1人（重み最大の選手）に集中させていたため、その選手のcarry（誤差拡散の
+// 持ち越し分）が符号の定まらないランダムウォーク的にズレ続け、シーズン
+// 終盤でスティールなど値の小さい項目が負になる不具合があった
+// （ユーザー報告。第30試合で-4を確認）。補正先を毎試合の端数の大きさで
+// ローテーションさせる方式（最大剰余方式）に直した後に追加した。
+function verifyNoNegativeStats(seasons) {
+  console.log("\n=== 負の値混入チェック（" + seasons + "シーズン、実プレイに近い流れ） ===");
+
+  var league = setupLeague();
+  var problems = [];
+  var noMyTeam = -1;
+
+  for (var s = 0; s < seasons; s++) {
+    advanceSeason(league);
+    processExpiredAiContracts(league, noMyTeam);
+    enforceSalaryCap(league, noMyTeam);
+    resetRecords(league.teams);
+    playSeason(league.teams);
+
+    league.teams.forEach(function (team) {
+      ["wins", "losses", "pointsFor", "pointsAgainst"].forEach(function (key) {
+        if (team[key] < 0) problems.push("シーズン" + (s + 1) + " " + team.name + "." + key + " = " + team[key]);
+      });
+
+      team.gameLog.forEach(function (g, gi) {
+        if (g.myScore < 0 || g.oppScore < 0) {
+          problems.push("シーズン" + (s + 1) + " " + team.name + " 第" + (gi + 1) + "試合 スコア=" + g.myScore + "-" + g.oppScore);
+        }
+        g.players.forEach(function (bp) {
+          ["points", "rebounds", "assists", "steals"].forEach(function (key) {
+            if (bp[key] < 0) {
+              problems.push("シーズン" + (s + 1) + " " + team.name + " 第" + (gi + 1) + "試合 " + bp.name + "." + key + " = " + bp[key]);
+            }
+          });
+        });
+      });
+
+      team.roster.forEach(function (p) {
+        ["two", "three", "drib", "reb", "defe", "age", "experience", "contractSalary"].forEach(function (key) {
+          if (p[key] < 0) problems.push("シーズン" + (s + 1) + " " + team.name + " " + p.name + "." + key + " = " + p[key]);
+        });
+        if (p.stats) {
+          ["points", "rebounds", "assists", "steals"].forEach(function (key) {
+            if (p.stats[key] < 0) {
+              problems.push("シーズン" + (s + 1) + " " + team.name + " " + p.name + ".stats." + key + " = " + p.stats[key]);
+            }
+          });
+        }
+      });
+    });
+  }
+
+  if (problems.length === 0) {
+    console.log(seasons + "シーズンぶん、負の値の混入なし");
+  } else {
+    console.log(problems.length + "件の負の値を検出:");
+    problems.slice(0, 10).forEach(function (p) { console.log("  " + p); });
+  }
+}
+
 // セーブデータの読み書き（localStorage）。
 // キーは1つにまとめ、バージョン番号を入れる（DESIGN.md「保存」参照）。
 // 仕様変更で古いセーブと形が合わなくなったら、SAVE_KEYの末尾を
@@ -1550,6 +1642,7 @@ function main() {
   verifyPopulationStability(10, 20);
   verifySaveValidation();
   verifyNoNaN(20);
+  verifyNoNegativeStats(20);
 }
 
 // ブラウザでui.jsから読み込まれるとき（後の段階）は自動実行しない。
