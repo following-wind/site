@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>北海道の窓</title>
+<meta name="description" content="北海道の麦畑を望む窓辺で、静かなロファイの曲を流し続けるページです。">
+<style>
+  html, body { margin: 0; height: 100%; background: #05070d; overflow: hidden; }
+
+  #bgvideo {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    object-fit: cover;
+    z-index: 0;
+  }
+
+  #overlay {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    font: 20px/1.4 -apple-system, "Hiragino Sans", sans-serif;
+    cursor: pointer;
+    user-select: none;
+    z-index: 10;
+  }
+
+  #mute-btn {
+    position: fixed;
+    right: 12px;
+    bottom: 12px;
+    color: rgba(255, 255, 255, 0.7);
+    font: 12px/1.4 -apple-system, "Hiragino Sans", sans-serif;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    padding: 4px 10px;
+    border-radius: 12px;
+    cursor: pointer;
+    z-index: 5;
+  }
+  #mute-btn:hover,
+  #mute-btn:focus-visible {
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.5);
+  }
+
+  footer {
+    position: fixed;
+    left: 12px;
+    bottom: 12px;
+    font: 12px/1.4 -apple-system, "Hiragino Sans", sans-serif;
+    color: rgba(255, 255, 255, 0.55);
+    z-index: 5;
+  }
+  footer a {
+    color: rgba(255, 255, 255, 0.75);
+    text-decoration: none;
+  }
+  footer a:hover,
+  footer a:focus-visible {
+    text-decoration: underline;
+  }
+</style>
+</head>
+<body>
+<video id="bgvideo" muted loop autoplay playsinline src="loop.mp4"></video>
+<audio id="bgm" loop preload="auto" src="song.mp3"></audio>
+<div id="overlay">クリックして再生</div>
+<button id="mute-btn" type="button">音を止める</button>
+<footer>
+  <a href="../">追い風</a> ／ <a href="../tips/">操作メモ</a> ／ <a href="../books/">読書</a> ／ <a href="../rain/">雨の窓</a>
+</footer>
+<script>
+"use strict";
+
+(function () {
+  const overlay  = document.getElementById("overlay");
+  const bgm      = document.getElementById("bgm");
+  const muteBtn  = document.getElementById("mute-btn");
+
+  overlay.addEventListener("click", () => {
+    overlay.remove();
+    bgm.play();
+  }, { once: true });
+
+  muteBtn.addEventListener("click", () => {
+    bgm.muted = !bgm.muted;
+    muteBtn.textContent = bgm.muted ? "音を鳴らす" : "音を止める";
+  });
+})();
+</script>
+</body>
+</html>
