@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>コード進行お試しページ</title>
+<style>
+  :root {
+    color-scheme: light dark;
+  }
+  body {
+    font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+    max-width: 900px;
+    margin: 24px auto;
+    padding: 0 16px;
+    line-height: 1.6;
+  }
+  h1 { font-size: 1.3em; }
+  h2 { font-size: 1.05em; margin-top: 1.8em; }
+  .hint {
+    font-size: 0.85em;
+    opacity: 0.75;
+  }
+  .transport {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding: 12px;
+    border: 1px solid #8884;
+    border-radius: 8px;
+    margin-bottom: 16px;
+  }
+  .transport label {
+    font-size: 0.9em;
+  }
+  #playBtn {
+    font-size: 1.1em;
+    padding: 8px 20px;
+    cursor: pointer;
+  }
+  .slot-count-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .slot-count-controls button {
+    width: 32px;
+    height: 32px;
+    font-size: 1.1em;
+    cursor: pointer;
+  }
+  #progression {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .chord-slot {
+    border: 1px solid #8886;
+    border-radius: 8px;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 140px;
+    position: relative;
+  }
+  .chord-slot.playing {
+    border-color: #4a90d9;
+    box-shadow: 0 0 0 2px #4a90d955;
+  }
+  .chord-slot .slot-index {
+    font-size: 0.75em;
+    opacity: 0.6;
+  }
+  .chord-slot select {
+    padding: 4px;
+    font-size: 0.95em;
+  }
+  .chord-slot .chord-name {
+    font-weight: bold;
+    text-align: center;
+  }
+  pre#jsonOut {
+    background: #8881;
+    padding: 12px;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-size: 0.85em;
+  }
+</style>
+</head>
+<body>
+
+<h1>コード進行お試しページ</h1>
+<p class="hint">
+  ルートとタイプをプルダウンで選ぶと、その場でコードが1回鳴ります。
+  コード名が分からなくても、鳴らして気に入った響きを選べばOKです。
+</p>
+
+<div class="transport">
+  <button id="playBtn">▶ 再生</button>
+  <label>
+    BPM: <span id="bpmValue">75</span>
+    <input type="range" id="bpmSlider" min="60" max="100" value="75">
+  </label>
+  <div class="slot-count-controls">
+    <span>コード数:</span>
+    <button id="minusBtn">−</button>
+    <span id="slotCountLabel">4</span>
+    <button id="plusBtn">＋</button>
+  </div>
+</div>
+
+<div id="progression"></div>
+
+<h2>現在の設定（JSON）</h2>
+<p class="hint">Python側に貼れる形で表示しています。</p>
+<pre id="jsonOut"></pre>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---- コードの定義 ----------------------------------------------------
+  const ROOTS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+
+  // 半音数(インターバル)。C=0を根音として数える。
+  const CHORD_TYPES = {
+    "maj":  { label: "maj（3音・明るい）",             intervals: [0, 4, 7] },
+    "m":    { label: "m（3音・暗い）",                 intervals: [0, 3, 7] },
+    "maj7": { label: "maj7（4音・明るく柔らかい）",     intervals: [0, 4, 7, 11] },
+    "m7":   { label: "m7（4音・暗く柔らかい）",         intervals: [0, 3, 7, 10] },
+    "7":    { label: "7（4音・次へ進みたい）",          intervals: [0, 4, 7, 10] },
+  };
+
+  const MIN_SLOTS = 2;
+  const MAX_SLOTS = 8;
+  const BASE_MIDI = 48; // C3 を根音の基準にする
+
+  // ---- 状態 --------------------------------------------------------
+  // 初期値: Bbm7 -> Cm7 -> Fm7 -> Dbmaj7 (過去に良かった進行)
+  // このプルダウンはシャープ表記のみなので Bb=A#, Db=C# として扱う
+  let progression = [
+    { root: "A#", type: "m7" },
+    { root: "C",  type: "m7" },
+    { root: "F",  type: "m7" },
+    { root: "C#", type: "maj7" },
+  ];
+  let bpm = 75;
+  let isPlaying = false;
+
+  // ---- Web Audio ----------------------------------------------------
+  let audioCtx = null;
+  function getAudioCtx() {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (audioCtx.state === "suspended") {
+      audioCtx.resume();
+    }
+    return audioCtx;
+  }
+
+  function midiToFreq(midi) {
+    return 440 * Math.pow(2, (midi - 69) / 12);
+  }
+
+  // 単音: フェードイン/フェードアウト付きで鳴らす
+  function playNote(ctx, freq, startTime, duration, peakGain) {
+    const osc = ctx.createOscillator();
+    osc.type = "triangle";
+    osc.frequency.value = freq;
+
+    const gain = ctx.createGain();
+    const fade = Math.min(0.03, duration / 4);
+    gain.gain.setValueAtTime(0, startTime);
+    gain.gain.linearRampToValueAtTime(peakGain, startTime + fade);
+    gain.gain.setValueAtTime(peakGain, startTime + duration - fade);
+    gain.gain.linearRampToValueAtTime(0, startTime + duration);
+
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(startTime);
+    osc.stop(startTime + duration + 0.02);
+  }
+
+  // 和音: root(0-11) と type から音を組み立てて鳴らす
+  function playChord(chord, startTime, duration) {
+    const ctx = getAudioCtx();
+    const rootIndex = ROOTS.indexOf(chord.root);
+    const intervals = CHORD_TYPES[chord.type].intervals;
+    intervals.forEach((iv) => {
+      const freq = midiToFreq(BASE_MIDI + rootIndex + iv);
+      playNote(ctx, freq, startTime, duration, 0.1);
+    });
+  }
+
+  // プレビュー用: 単体のコードを1回だけ鳴らす
+  function previewChord(chord) {
+    const ctx = getAudioCtx();
+    playChord(chord, ctx.currentTime, 0.8);
+  }
+
+  // ---- 進行の再生スケジューラ -----------------------------------------
+  // 1コード = 1小節(4拍)として、BPMから小節の長さを計算する
+  function barDuration() {
+    return (60 / bpm) * 4;
+  }
+
+  let schedulerTimer = null;
+  let nextNoteTime = 0;
+  let currentStep = 0;
+  const scheduleAheadTime = 0.15; // 秒
+  const lookaheadMs = 25;
+
+  function scheduler() {
+    const ctx = getAudioCtx();
+    while (nextNoteTime < ctx.currentTime + scheduleAheadTime) {
+      const chord = progression[currentStep];
+      playChord(chord, nextNoteTime, barDuration());
+      highlightStep(currentStep, nextNoteTime);
+      currentStep = (currentStep + 1) % progression.length;
+      nextNoteTime += barDuration();
+    }
+    schedulerTimer = setTimeout(scheduler, lookaheadMs);
+  }
+
+  function highlightStep(step, atTime) {
+    const ctx = getAudioCtx();
+    const delayMs = Math.max(0, (atTime - ctx.currentTime) * 1000);
+    setTimeout(() => {
+      document.querySelectorAll(".chord-slot").forEach((el, i) => {
+        el.classList.toggle("playing", isPlaying && i === step);
+      });
+    }, delayMs);
+  }
+
+  function startPlayback() {
+    const ctx = getAudioCtx();
+    isPlaying = true;
+    currentStep = 0;
+    nextNoteTime = ctx.currentTime + 0.05;
+    scheduler();
+    playBtn.textContent = "■ 停止";
+  }
+
+  function stopPlayback() {
+    isPlaying = false;
+    clearTimeout(schedulerTimer);
+    schedulerTimer = null;
+    document.querySelectorAll(".chord-slot").forEach((el) => el.classList.remove("playing"));
+    playBtn.textContent = "▶ 再生";
+  }
+
+  // ---- UI 構築 --------------------------------------------------------
+  const progressionEl = document.getElementById("progression");
+  const jsonOutEl = document.getElementById("jsonOut");
+  const bpmSlider = document.getElementById("bpmSlider");
+  const bpmValueEl = document.getElementById("bpmValue");
+  const playBtn = document.getElementById("playBtn");
+  const minusBtn = document.getElementById("minusBtn");
+  const plusBtn = document.getElementById("plusBtn");
+  const slotCountLabel = document.getElementById("slotCountLabel");
+
+  function optionsHtml(list, selectedKey, labelFn) {
+    return list
+      .map((key) => {
+        const label = labelFn(key);
+        const sel = key === selectedKey ? " selected" : "";
+        return `<option value="${key}"${sel}>${label}</option>`;
+      })
+      .join("");
+  }
+
+  function renderProgression() {
+    progressionEl.innerHTML = "";
+    progression.forEach((chord, i) => {
+      const slot = document.createElement("div");
+      slot.className = "chord-slot";
+
+      const idx = document.createElement("div");
+      idx.className = "slot-index";
+      idx.textContent = `${i + 1}番目`;
+      slot.appendChild(idx);
+
+      const name = document.createElement("div");
+      name.className = "chord-name";
+      name.textContent = chord.root + chord.type;
+      slot.appendChild(name);
+
+      const rootSelect = document.createElement("select");
+      rootSelect.innerHTML = optionsHtml(ROOTS, chord.root, (r) => r);
+      rootSelect.addEventListener("change", () => {
+        progression[i].root = rootSelect.value;
+        name.textContent = progression[i].root + progression[i].type;
+        previewChord(progression[i]);
+        updateJsonOut();
+      });
+      slot.appendChild(rootSelect);
+
+      const typeSelect = document.createElement("select");
+      typeSelect.innerHTML = optionsHtml(
+        Object.keys(CHORD_TYPES),
+        chord.type,
+        (t) => CHORD_TYPES[t].label
+      );
+      typeSelect.addEventListener("change", () => {
+        progression[i].type = typeSelect.value;
+        name.textContent = progression[i].root + progression[i].type;
+        previewChord(progression[i]);
+        updateJsonOut();
+      });
+      slot.appendChild(typeSelect);
+
+      progressionEl.appendChild(slot);
+    });
+
+    slotCountLabel.textContent = String(progression.length);
+    minusBtn.disabled = progression.length <= MIN_SLOTS;
+    plusBtn.disabled = progression.length >= MAX_SLOTS;
+    updateJsonOut();
+  }
+
+  function updateJsonOut() {
+    const data = {
+      chords: progression.map((c) => ({ root: c.root, type: c.type })),
+      bpm: bpm,
+    };
+    jsonOutEl.textContent = JSON.stringify(data, null, 2);
+  }
+
+  // ---- イベント ---------------------------------------------------------
+  bpmSlider.addEventListener("input", () => {
+    bpm = Number(bpmSlider.value);
+    bpmValueEl.textContent = String(bpm);
+    updateJsonOut();
+  });
+
+  plusBtn.addEventListener("click", () => {
+    if (progression.length >= MAX_SLOTS) return;
+    progression.push({ root: "C", type: "maj" });
+    renderProgression();
+  });
+
+  minusBtn.addEventListener("click", () => {
+    if (progression.length <= MIN_SLOTS) return;
+    progression.pop();
+    renderProgression();
+  });
+
+  playBtn.addEventListener("click", () => {
+    if (isPlaying) {
+      stopPlayback();
+    } else {
+      startPlayback();
+    }
+  });
+
+  // ---- 初期化 ---------------------------------------------------------
+  renderProgression();
+})();
+</script>
+
+</body>
+</html>
