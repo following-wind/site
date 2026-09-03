@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ハミング再生ページ</title>
+<meta name="description" content="鼻歌を解析して取り出した音符データを、ブラウザで鳴らして聞き返せるページです。">
+<style>
+  :root {
+    color-scheme: light dark;
+  }
+  body {
+    font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+    max-width: 900px;
+    margin: 24px auto;
+    padding: 0 16px;
+    line-height: 1.6;
+  }
+  h1 { font-size: 1.3em; }
+  .hint {
+    font-size: 0.85em;
+    opacity: 0.75;
+  }
+  textarea#jsonInput {
+    width: 100%;
+    height: 160px;
+    box-sizing: border-box;
+    font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+    font-size: 0.85em;
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid #8886;
+  }
+  .transport {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 12px;
+    border: 1px solid #8884;
+    border-radius: 8px;
+    margin: 12px 0;
+  }
+  .transport button {
+    font-size: 1.05em;
+    padding: 8px 20px;
+    cursor: pointer;
+  }
+  .error {
+    color: #d9534f;
+    font-size: 0.9em;
+    min-height: 1.2em;
+  }
+  #nowPlaying {
+    font-size: 1.1em;
+    min-height: 1.6em;
+    margin: 8px 0;
+  }
+  #noteChips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+  }
+  .note-chip {
+    border: 1px solid #8886;
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 0.8em;
+    opacity: 0.6;
+  }
+  .note-chip.playing {
+    border-color: #4a90d9;
+    box-shadow: 0 0 0 2px #4a90d955;
+    opacity: 1;
+    font-weight: bold;
+  }
+  footer {
+    margin-top: 3rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid #8884;
+    font-size: 0.8125rem;
+    opacity: 0.75;
+  }
+  footer a {
+    color: #4a90d9;
+    text-decoration: none;
+  }
+  footer a:hover,
+  footer a:focus-visible {
+    text-decoration: underline;
+  }
+</style>
+</head>
+<body>
+
+<h1>ハミング再生ページ</h1>
+<p class="hint">
+  鼻歌で歌ったメロディを音符データに変換し、ブラウザでそのまま鳴らして聞き返せるページです。
+  下のテキストボックスにはサンプルの音符データが入っているので、再生ボタンを押すとすぐ音が出ます。
+</p>
+
+<textarea id="jsonInput" placeholder='[{"note": "C4", "midi": 60, "start": 0.0, "duration": 0.5}, ...]'>[
+  {
+    "note": "C3",
+    "midi": 48,
+    "start": 0.971,
+    "duration": 0.117
+  },
+  {
+    "note": "C3",
+    "midi": 48,
+    "start": 1.163,
+    "duration": 0.107
+  },
+  {
+    "note": "C♯3",
+    "midi": 49,
+    "start": 1.344,
+    "duration": 0.341
+  },
+  {
+    "note": "A♯2",
+    "midi": 46,
+    "start": 1.771,
+    "duration": 0.32
+  },
+  {
+    "note": "G♯2",
+    "midi": 44,
+    "start": 2.187,
+    "duration": 0.341
+  },
+  {
+    "note": "C3",
+    "midi": 48,
+    "start": 2.603,
+    "duration": 0.331
+  },
+  {
+    "note": "C♯3",
+    "midi": 49,
+    "start": 3.019,
+    "duration": 0.299
+  },
+  {
+    "note": "E3",
+    "midi": 52,
+    "start": 3.392,
+    "duration": 0.341
+  },
+  {
+    "note": "F♯3",
+    "midi": 54,
+    "start": 3.797,
+    "duration": 0.331
+  },
+  {
+    "note": "A2",
+    "midi": 45,
+    "start": 4.224,
+    "duration": 0.288
+  },
+  {
+    "note": "A3",
+    "midi": 57,
+    "start": 4.619,
+    "duration": 0.608
+  },
+  {
+    "note": "A♯3",
+    "midi": 58,
+    "start": 5.301,
+    "duration": 0.672
+  },
+  {
+    "note": "G♯3",
+    "midi": 56,
+    "start": 6.773,
+    "duration": 0.096
+  },
+  {
+    "note": "F♯3",
+    "midi": 54,
+    "start": 6.965,
+    "duration": 0.352
+  },
+  {
+    "note": "F3",
+    "midi": 53,
+    "start": 7.381,
+    "duration": 0.107
+  },
+  {
+    "note": "D♯3",
+    "midi": 51,
+    "start": 7.584,
+    "duration": 0.288
+  },
+  {
+    "note": "B2",
+    "midi": 47,
+    "start": 7.989,
+    "duration": 0.373
+  },
+  {
+    "note": "G♯2",
+    "midi": 44,
+    "start": 8.437,
+    "duration": 0.363
+  },
+  {
+    "note": "C3",
+    "midi": 48,
+    "start": 8.864,
+    "duration": 0.32
+  },
+  {
+    "note": "C♯3",
+    "midi": 49,
+    "start": 9.28,
+    "duration": 0.309
+  },
+  {
+    "note": "D3",
+    "midi": 50,
+    "start": 9.653,
+    "duration": 0.341
+  },
+  {
+    "note": "F3",
+    "midi": 53,
+    "start": 10.155,
+    "duration": 0.32
+  },
+  {
+    "note": "A2",
+    "midi": 45,
+    "start": 10.581,
+    "duration": 0.256
+  },
+  {
+    "note": "D3",
+    "midi": 50,
+    "start": 11.029,
+    "duration": 0.299
+  },
+  {
+    "note": "C♯3",
+    "midi": 49,
+    "start": 11.456,
+    "duration": 0.384
+  },
+  {
+    "note": "C3",
+    "midi": 48,
+    "start": 12.555,
+    "duration": 0.085
+  },
+  {
+    "note": "C3",
+    "midi": 48,
+    "start": 12.747,
+    "duration": 0.096
+  },
+  {
+    "note": "C♯3",
+    "midi": 49,
+    "start": 12.907,
+    "duration": 0.096
+  },
+  {
+    "note": "C3",
+    "midi": 48,
+    "start": 13.077,
+    "duration": 0.139
+  },
+  {
+    "note": "A♯2",
+    "midi": 46,
+    "start": 13.493,
+    "duration": 0.139
+  }
+]</textarea>
+<div class="error" id="errorMsg"></div>
+
+<div class="transport">
+  <button id="playBtn">▶ 再生</button>
+  <button id="stopBtn">■ 停止</button>
+</div>
+
+<div id="nowPlaying">停止中</div>
+<div id="noteChips"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---- 音の設定 ----------------------------------------------------
+  const PEAK_GAIN = 0.15;   // 控えめな音量(1声のみなのでchordより少し大きめ)
+  const FADE_TIME = 0.03;   // 各音のフェードイン/フェードアウトの上限(秒)
+
+  // ---- Web Audio ----------------------------------------------------
+  let audioCtx = null;
+  let isPlaying = false;
+  let timers = [];   // setTimeoutのID一覧(停止時にまとめてクリアする)
+
+  function midiToFreq(midi) {
+    return 440 * Math.pow(2, (midi - 69) / 12);
+  }
+
+  // following-wind-site/chords/index.html の playNote と同じ作り方
+  function playNote(ctx, freq, startTime, duration, peakGain) {
+    const osc = ctx.createOscillator();
+    osc.type = "triangle";
+    osc.frequency.value = freq;
+
+    const gain = ctx.createGain();
+    const fade = Math.min(FADE_TIME, duration / 4);
+    gain.gain.setValueAtTime(0, startTime);
+    gain.gain.linearRampToValueAtTime(peakGain, startTime + fade);
+    gain.gain.setValueAtTime(peakGain, startTime + duration - fade);
+    gain.gain.linearRampToValueAtTime(0, startTime + duration);
+
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(startTime);
+    osc.stop(startTime + duration + 0.02);
+  }
+
+  // ---- JSON読み込み ----------------------------------------------------
+  function parseNotes(text) {
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      throw new Error("JSONの形式が正しくありません: " + e.message);
+    }
+    if (!Array.isArray(data)) {
+      throw new Error("JSONは配列である必要があります([{...}, {...}])");
+    }
+    if (data.length === 0) {
+      throw new Error("音符が1つもありません");
+    }
+    data.forEach((n, i) => {
+      if (typeof n.midi !== "number" || typeof n.start !== "number" || typeof n.duration !== "number") {
+        throw new Error(`${i + 1}番目の要素に midi/start/duration が数値で揃っていません`);
+      }
+    });
+    return data;
+  }
+
+  // ---- UI ----------------------------------------------------
+  const jsonInputEl = document.getElementById("jsonInput");
+  const errorMsgEl = document.getElementById("errorMsg");
+  const nowPlayingEl = document.getElementById("nowPlaying");
+  const noteChipsEl = document.getElementById("noteChips");
+  const playBtn = document.getElementById("playBtn");
+  const stopBtn = document.getElementById("stopBtn");
+
+  function renderChips(notes) {
+    noteChipsEl.innerHTML = "";
+    notes.forEach((n) => {
+      const chip = document.createElement("span");
+      chip.className = "note-chip";
+      chip.textContent = n.note || `midi ${n.midi}`;
+      noteChipsEl.appendChild(chip);
+    });
+  }
+
+  function clearTimers() {
+    timers.forEach((id) => clearTimeout(id));
+    timers = [];
+  }
+
+  function resetToStopped() {
+    isPlaying = false;
+    nowPlayingEl.textContent = "停止中";
+    document.querySelectorAll(".note-chip").forEach((el) => el.classList.remove("playing"));
+  }
+
+  function stopPlayback() {
+    clearTimers();
+    if (audioCtx) {
+      // contextを閉じるとスケジュール済みの音も含めて即座に止まる
+      audioCtx.close();
+      audioCtx = null;
+    }
+    resetToStopped();
+  }
+
+  function startPlayback() {
+    let notes;
+    try {
+      notes = parseNotes(jsonInputEl.value);
+    } catch (e) {
+      errorMsgEl.textContent = e.message;
+      return;
+    }
+    errorMsgEl.textContent = "";
+
+    stopPlayback(); // 念のため前の再生を止めてからやり直す
+
+    notes = notes.slice().sort((a, b) => a.start - b.start);
+    renderChips(notes);
+    const chipEls = noteChipsEl.querySelectorAll(".note-chip");
+
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    isPlaying = true;
+
+    const baseTime = audioCtx.currentTime + 0.05;
+
+    notes.forEach((note, i) => {
+      const freq = midiToFreq(note.midi);
+      playNote(audioCtx, freq, baseTime + note.start, note.duration, PEAK_GAIN);
+
+      const startDelayMs = note.start * 1000;
+      timers.push(setTimeout(() => {
+        nowPlayingEl.textContent = `♪ ${note.note || note.midi} (${i + 1} / ${notes.length})`;
+        chipEls.forEach((el, j) => el.classList.toggle("playing", j === i));
+      }, startDelayMs));
+    });
+
+    const lastNote = notes[notes.length - 1];
+    const totalMs = (lastNote.start + lastNote.duration) * 1000;
+    timers.push(setTimeout(() => {
+      resetToStopped();
+    }, totalMs + 50));
+  }
+
+  playBtn.addEventListener("click", startPlayback);
+  stopBtn.addEventListener("click", stopPlayback);
+})();
+</script>
+
+<footer>
+  <a href="../">追い風</a> ／ <a href="../tips/">操作メモ</a> ／ <a href="../books/">読書</a> ／ <a href="../rain/">雨の窓</a> ／ <a href="../hokkaido/">北海道の窓</a> ／ <a href="../chords/">コード進行お試しページ</a>
+</footer>
+
+</body>
+</html>
