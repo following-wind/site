@@ -532,7 +532,9 @@
   }
 
   // 長さ変更(shiftDuration)が今できるかどうかを判定する。
-  // direction: +1=長くする(次の音符を短くして吸収)、-1=短くする(次の音符を長くする)
+  // direction: +1=長くする(次の音符のstartを後ろへずらし、その分durationを減らす)
+  //           -1=短くする(次の音符のstartを前へずらし、その分durationを増やす)
+  // どちらも次の音符の終了位置(start+duration)は変わらない
   function checkDurationShift(direction) {
     if (selectedIndex < 0 || selectedIndex >= notes.length) {
       return { ok: false, reason: "" };
@@ -780,8 +782,10 @@
     return bpm ? (60 / bpm) / 4 : null;
   }
 
-  // 選択中の音符の長さを16分音符単位で変える(startはどの音符も動かさない)。
-  // 増やした分は次の音符の長さから、減らした分は次の音符の長さに、そのまま移す
+  // 選択中の音符の長さを16分音符単位で変える。
+  // 長くした分だけ次の音符のstartを後ろへ、短くした分だけ次の音符のstartを前へずらし、
+  // その分だけ次の音符のdurationを反対に増減させる。
+  // これにより次の音符の終了位置(start+duration)は変わらず、重なりも起きない
   function shiftDuration(direction) {
     const check = checkDurationShift(direction);
     if (!check.ok) return;
@@ -792,6 +796,7 @@
     const delta = direction * step;
 
     cur.duration = round3(cur.duration + delta);
+    next.start = round3(next.start + delta);
     next.duration = round3(next.duration - delta);
 
     writeBackJson();
