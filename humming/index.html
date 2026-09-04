@@ -141,7 +141,11 @@
     fill: #4a90d9;
   }
   .piano-roll-note-clickable {
-    cursor: pointer;
+    cursor: grab;
+  }
+  .piano-roll-resize-handle {
+    fill: transparent;
+    cursor: ew-resize;
   }
   .piano-roll-note-selected {
     fill: #e08a2e;
@@ -509,8 +513,33 @@
       bpm: currentHummingBpm(),
       selectedIndex,
       onNoteClick: selectNote,
+      onNoteDrag: handleNoteDrag,
+      onDragEnd: handleDragEnd,
     });
     pianoRollWrapEl.appendChild(svg);
+  }
+
+  // ドラッグ中: その場でnotesを書き換えて描き直すだけ(ブロックが動いて見えるように)。
+  // 他の音符には触らない。丸めや書き戻しはドラッグが終わるまで行わない
+  function handleNoteDrag(index, kind, value) {
+    if (index < 0 || index >= notes.length) return;
+    if (kind === "resize") {
+      notes[index].duration = value;
+    } else {
+      notes[index].start = value;
+    }
+    renderPianoRoll();
+  }
+
+  // ドラッグ終了: 値を丸めてJSONに書き戻し、長さ変更ボタンの状態も合わせる
+  function handleDragEnd(index) {
+    if (index < 0 || index >= notes.length) return;
+    const note = notes[index];
+    note.start = round3(note.start);
+    note.duration = round3(note.duration);
+    writeBackJson();
+    updateDurationButtons();
+    renderPianoRoll();
   }
 
   function updateSelectionUI() {
@@ -653,7 +682,8 @@
 
   // rollNotes: 描画する音符の配列
   // range: {min, max}(computePianoRollRangeで求めた、固定して使う音域)
-  // opts: bpm / rowHeight / pxPerSec / labelWidth / selectedIndex / diffIndices(Set) / onNoteClick
+  // opts: bpm / rowHeight / pxPerSec / labelWidth / selectedIndex / diffIndices(Set)
+  //       onNoteClick(index) / onNoteDrag(index, "move"|"resize", value) / onDragEnd(index)
   function buildPianoRoll(rollNotes, range, opts) {
     opts = opts || {};
     const rowHeight = opts.rowHeight || PIANO_ROLL_ROW_HEIGHT;
@@ -732,11 +762,16 @@
 
     // 音符ブロック
     rollNotes.forEach((n, i) => {
+      const rectX = xFor(n.start) + 1;
+      const rectWidth = Math.max(2, n.duration * pxPerSec - 2);
+      const rectY = yFor(n.midi) + 1;
+      const rectHeight = Math.max(2, rowHeight - 2);
+
       const rect = document.createElementNS(svgNS, "rect");
-      rect.setAttribute("x", xFor(n.start) + 1);
-      rect.setAttribute("y", yFor(n.midi) + 1);
-      rect.setAttribute("width", Math.max(2, n.duration * pxPerSec - 2));
-      rect.setAttribute("height", Math.max(2, rowHeight - 2));
+      rect.setAttribute("x", rectX);
+      rect.setAttribute("y", rectY);
+      rect.setAttribute("width", rectWidth);
+      rect.setAttribute("height", rectHeight);
       rect.setAttribute("rx", 2);
       rect.dataset.index = String(i);
 
@@ -745,14 +780,66 @@
       if (opts.selectedIndex === i) cls += " piano-roll-note-selected";
       rect.setAttribute("class", cls);
 
-      if (opts.onNoteClick) {
+      if (opts.onNoteClick || opts.onNoteDrag) {
         rect.classList.add("piano-roll-note-clickable");
-        rect.addEventListener("click", () => opts.onNoteClick(i));
+        attachNoteInteraction(rect, i, n, "move", pxPerSec, opts);
       }
       svg.appendChild(rect);
+
+      // 右端の細い帯だけをドラッグすると長さ変更になる(音符本体のドラッグ=移動と区別するため)
+      if (opts.onNoteDrag) {
+        const handleWidth = Math.max(2, Math.min(6, rectWidth / 3));
+        const handle = document.createElementNS(svgNS, "rect");
+        handle.setAttribute("x", rectX + rectWidth - handleWidth);
+        handle.setAttribute("y", rectY);
+        handle.setAttribute("width", handleWidth);
+        handle.setAttribute("height", rectHeight);
+        handle.setAttribute("class", "piano-roll-resize-handle");
+        handle.dataset.index = String(i);
+        attachNoteInteraction(handle, i, n, "resize", pxPerSec, opts);
+        svg.appendChild(handle);
+      }
     });
 
     return svg;
+  }
+
+  // el(音符本体 or 右端ハンドル)へのドラッグ操作を仕込む。
+  // kind: "move"(startを変える) / "resize"(durationを変える)
+  // opts.onNoteClick(index): mousedown時に呼ぶ(選択+試聴)
+  // opts.onNoteDrag(index, kind, value): ドラッグ中、値が変わるたびに呼ぶ
+  // opts.onDragEnd(index): mouseupで呼ぶ(書き戻し・再描画などの締め処理用)
+  function attachNoteInteraction(el, index, note, kind, pxPerSec, opts) {
+    el.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return; // 左クリックのみ
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (opts.onNoteClick) opts.onNoteClick(index);
+      if (!opts.onNoteDrag) return;
+
+      const startClientX = e.clientX;
+      const origStart = note.start;
+      const origDuration = note.duration;
+
+      function onMouseMove(moveEvent) {
+        const deltaSec = (moveEvent.clientX - startClientX) / pxPerSec;
+        if (kind === "resize") {
+          opts.onNoteDrag(index, "resize", Math.max(0.02, origDuration + deltaSec));
+        } else {
+          opts.onNoteDrag(index, "move", Math.max(0, origStart + deltaSec)); // startは負にしない
+        }
+      }
+
+      function onMouseUp() {
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+        if (opts.onDragEnd) opts.onDragEnd(index);
+      }
+
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+    });
   }
 
   // 選択中の音符を半音単位で上下させる(長さ start / duration は触らない)
