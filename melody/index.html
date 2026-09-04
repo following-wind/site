@@ -131,6 +131,51 @@
     width: 4.5em;
     padding: 5px 6px;
   }
+  /* ---- ピアノロール表示(following-wind-site/humming, following-wind-site/melody で共通) ---- */
+  .piano-roll-wrap {
+    overflow-x: auto;
+    border: 1px solid #8884;
+    border-radius: 8px;
+    margin: 10px 0;
+  }
+  .piano-roll {
+    display: block;
+  }
+  .piano-roll-row-white {
+    fill: #8882;
+  }
+  .piano-roll-row-black {
+    fill: #8886;
+  }
+  .piano-roll-label {
+    font-size: 9px;
+    fill: currentColor;
+    opacity: 0.6;
+    font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  }
+  .piano-roll-beat-line {
+    stroke: #8884;
+    stroke-width: 1;
+  }
+  .piano-roll-bar-line {
+    stroke: #8889;
+    stroke-width: 1.5;
+  }
+  .piano-roll-note {
+    fill: #4a90d9;
+  }
+  .piano-roll-note-clickable {
+    cursor: pointer;
+  }
+  .piano-roll-note-selected {
+    fill: #e08a2e;
+  }
+  .piano-roll-note-diff {
+    fill: #e08a2e;
+  }
+  .piano-roll-wrap-small .piano-roll-label {
+    font-size: 7px;
+  }
   #historyList {
     font-size: 0.85em;
   }
@@ -631,6 +676,161 @@
     return PITCH_LEVELS.map((level) => generatePitchCandidate(origin, level));
   }
 
+  // ---- ピアノロール表示 ----------------------------------------------------
+  // following-wind-site/humming/index.html にも同じ内容をコピーしてある。
+  // 直したときは両方に反映すること
+  const PIANO_ROLL_ROW_HEIGHT = 12;    // 半音1つぶんの高さ(px)
+  const PIANO_ROLL_LABEL_WIDTH = 32;   // 左端の音名ラベルの幅(px)
+  const PIANO_ROLL_PX_PER_SEC = 90;    // 横方向、1秒あたりのpx
+  const PIANO_ROLL_PADDING_SEC = 0.3;  // 右端の余白(秒)
+  const PIANO_ROLL_MARGIN_SEMITONES = 2; // 音域の上下に足す余白(半音)
+
+  // 候補5本を並べるときは1本あたりを小さめの表示にする
+  const PIANO_ROLL_ROW_HEIGHT_SMALL = 6;
+  const PIANO_ROLL_PX_PER_SEC_SMALL = 45;
+  const PIANO_ROLL_LABEL_WIDTH_SMALL = 24;
+
+  function isBlackKeyMidi(midi) {
+    return [1, 3, 6, 8, 10].includes(((midi % 12) + 12) % 12);
+  }
+
+  const PIANO_ROLL_WHITE_KEY_OFFSETS = [0, 2, 4, 5, 7, 9, 11]; // C D E F G A B
+  const PIANO_ROLL_MIN_LABEL_ROW_HEIGHT = 9; // これよりrowHeightが小さいときはCの位置だけに間引く
+
+  function isWhiteKeyMidi(midi) {
+    return PIANO_ROLL_WHITE_KEY_OFFSETS.includes(((midi % 12) + 12) % 12);
+  }
+
+  // メロディに出てくる音の範囲+上下の余白。候補を切り替えても範囲がぶれないよう、
+  // 呼び出し側でメロディを読み直したタイミングだけで計算し、以降は使い回すこと
+  function computePianoRollRange(rangeNotes, margin) {
+    margin = margin == null ? PIANO_ROLL_MARGIN_SEMITONES : margin;
+    const midis = rangeNotes.map((n) => n.midi);
+    return {
+      min: Math.max(0, Math.min(...midis) - margin),
+      max: Math.min(127, Math.max(...midis) + margin),
+    };
+  }
+
+  // rollNotes: 描画する音符の配列
+  // range: {min, max}(computePianoRollRangeで求めた、固定して使う音域)
+  // opts: bpm / rowHeight / pxPerSec / labelWidth / selectedIndex / diffIndices(Set) / onNoteClick
+  function buildPianoRoll(rollNotes, range, opts) {
+    opts = opts || {};
+    const rowHeight = opts.rowHeight || PIANO_ROLL_ROW_HEIGHT;
+    const pxPerSec = opts.pxPerSec || PIANO_ROLL_PX_PER_SEC;
+    const labelWidth = opts.labelWidth == null ? PIANO_ROLL_LABEL_WIDTH : opts.labelWidth;
+    const bpm = opts.bpm || null;
+
+    const svgNS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(svgNS, "svg");
+    svg.setAttribute("class", "piano-roll");
+
+    if (!rollNotes || rollNotes.length === 0) {
+      svg.setAttribute("width", 0);
+      svg.setAttribute("height", 0);
+      return svg;
+    }
+
+    const lastEnd = rollNotes.reduce((m, n) => Math.max(m, n.start + n.duration), 0);
+    const spanSec = lastEnd + PIANO_ROLL_PADDING_SEC;
+    const rows = range.max - range.min + 1;
+    const width = labelWidth + spanSec * pxPerSec;
+    const height = rows * rowHeight;
+
+    svg.setAttribute("width", width);
+    svg.setAttribute("height", height);
+    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+
+    const yFor = (midi) => (range.max - midi) * rowHeight;
+    const xFor = (t) => labelWidth + t * pxPerSec;
+
+    // rowHeightに余裕があれば白鍵(C D E F G A B)全部にラベルを出す。
+    // 潰れそうな細さのときはCの位置だけに間引く
+    const labelAllWhiteKeys = rowHeight >= PIANO_ROLL_MIN_LABEL_ROW_HEIGHT;
+
+    // 音域の背景(白鍵/黒鍵の帯) + 音名ラベル
+    for (let m = range.min; m <= range.max; m++) {
+      const row = document.createElementNS(svgNS, "rect");
+      row.setAttribute("x", 0);
+      row.setAttribute("y", yFor(m));
+      row.setAttribute("width", width);
+      row.setAttribute("height", rowHeight);
+      row.setAttribute(
+        "class",
+        "piano-roll-row " + (isBlackKeyMidi(m) ? "piano-roll-row-black" : "piano-roll-row-white")
+      );
+      svg.appendChild(row);
+
+      const shouldLabel = labelAllWhiteKeys ? isWhiteKeyMidi(m) : m % 12 === 0;
+      if (shouldLabel) {
+        const label = document.createElementNS(svgNS, "text");
+        label.setAttribute("x", labelWidth - 4);
+        label.setAttribute("y", yFor(m) + rowHeight - rowHeight * 0.25);
+        label.setAttribute("class", "piano-roll-label");
+        label.textContent = midiToName(m);
+        svg.appendChild(label);
+      }
+    }
+
+    // 拍・小節の区切り線(BPM指定時のみ。4/4拍子として扱う)
+    if (bpm) {
+      const beatDur = 60 / bpm;
+      const beatCount = Math.floor(spanSec / beatDur) + 1;
+      for (let b = 0; b <= beatCount; b++) {
+        const t = b * beatDur;
+        if (t > spanSec) break;
+        const x = xFor(t);
+        const line = document.createElementNS(svgNS, "line");
+        line.setAttribute("x1", x);
+        line.setAttribute("x2", x);
+        line.setAttribute("y1", 0);
+        line.setAttribute("y2", height);
+        line.setAttribute("class", b % 4 === 0 ? "piano-roll-bar-line" : "piano-roll-beat-line");
+        svg.appendChild(line);
+      }
+    }
+
+    // 音符ブロック
+    rollNotes.forEach((n, i) => {
+      const rect = document.createElementNS(svgNS, "rect");
+      rect.setAttribute("x", xFor(n.start) + 1);
+      rect.setAttribute("y", yFor(n.midi) + 1);
+      rect.setAttribute("width", Math.max(2, n.duration * pxPerSec - 2));
+      rect.setAttribute("height", Math.max(2, rowHeight - 2));
+      rect.setAttribute("rx", 2);
+      rect.dataset.index = String(i);
+
+      let cls = "piano-roll-note";
+      if (opts.diffIndices && opts.diffIndices.has(i)) cls += " piano-roll-note-diff";
+      if (opts.selectedIndex === i) cls += " piano-roll-note-selected";
+      rect.setAttribute("class", cls);
+
+      if (opts.onNoteClick) {
+        rect.classList.add("piano-roll-note-clickable");
+        rect.addEventListener("click", () => opts.onNoteClick(i));
+      }
+      svg.appendChild(rect);
+    });
+
+    return svg;
+  }
+
+  // 候補の音符のうち、元のメロディと比べて変わったものの位置(index)を集める。
+  // 音の高さモードなら高さ(midi)違い、リズムモードなら長さ(duration)違いを見る
+  function computeDiffIndices(candidateNotes, originNotes, mode) {
+    const diffs = new Set();
+    candidateNotes.forEach((n, i) => {
+      const o = originNotes[i];
+      if (!o) return;
+      const changed = mode === "rhythm"
+        ? Math.abs(n.duration - o.duration) > 0.0005
+        : n.midi !== o.midi;
+      if (changed) diffs.add(i);
+    });
+    return diffs;
+  }
+
   // ---- 拍に揃える(クオンタイズ) ----------------------------------------------------
   function roundToGrid(v, gridUnit) {
     return Math.round(v / gridUnit) * gridUnit;
@@ -740,6 +940,7 @@
   let extractResult = null;   // 直近に「切り出す」した結果(起点を変えるとクリアする)
   let candidates = [];        // 今表示している5候補
   let history = [];           // 選んだ結果の履歴
+  let pianoRollRange = null;  // 元のメロディの音域(候補5本で共通して使う。固定)
 
   function currentMode() {
     return document.querySelector('input[name="mode"]:checked').value;
@@ -802,12 +1003,25 @@
       head.appendChild(copyBtn);
       head.appendChild(detail);
 
+      const rollWrap = document.createElement("div");
+      rollWrap.className = "piano-roll-wrap piano-roll-wrap-small";
+      rollWrap.appendChild(
+        buildPianoRoll(notes, pianoRollRange, {
+          rowHeight: PIANO_ROLL_ROW_HEIGHT_SMALL,
+          pxPerSec: PIANO_ROLL_PX_PER_SEC_SMALL,
+          labelWidth: PIANO_ROLL_LABEL_WIDTH_SMALL,
+          bpm: currentBpm(),
+          diffIndices: computeDiffIndices(notes, currentOrigin, mode),
+        })
+      );
+
       const memo = document.createElement("textarea");
       memo.className = "memo";
       memo.placeholder = "この候補についてのメモ";
       memo.dataset.index = String(i);
 
       card.appendChild(head);
+      card.appendChild(rollWrap);
       card.appendChild(memo);
       candidatesEl.appendChild(card);
     });
@@ -916,6 +1130,7 @@
     });
 
     currentOrigin = candidates[i];
+    pianoRollRange = computePianoRollRange(currentOrigin);
     renderOrigin();
     renderHistory();
     renderExtractChips();
@@ -950,6 +1165,7 @@
   function adoptQuantizeResult() {
     if (!quantizeResult) return;
     currentOrigin = quantizeResult.notes;
+    pianoRollRange = computePianoRollRange(currentOrigin);
     renderOrigin();
     renderExtractChips();
     resetQuantizeResult();
@@ -1017,6 +1233,7 @@
   function adoptExtractResult() {
     if (!extractResult) return;
     currentOrigin = extractResult.notes;
+    pianoRollRange = computePianoRollRange(currentOrigin);
     renderOrigin();
     renderExtractChips();
     resetQuantizeResult();
@@ -1078,6 +1295,7 @@
     parsed = parsed.slice().sort((a, b) => a.start - b.start);
     originalMelody = parsed;
     currentOrigin = parsed;
+    pianoRollRange = computePianoRollRange(currentOrigin);
     history = [];
     candidates = [];
 
