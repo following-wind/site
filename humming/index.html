@@ -68,12 +68,44 @@
     padding: 4px 8px;
     font-size: 0.8em;
     opacity: 0.6;
+    font-family: inherit;
+    color: inherit;
+    background: transparent;
+    cursor: pointer;
+  }
+  .note-chip:hover {
+    opacity: 0.9;
   }
   .note-chip.playing {
     border-color: #4a90d9;
     box-shadow: 0 0 0 2px #4a90d955;
     opacity: 1;
     font-weight: bold;
+  }
+  .note-chip.selected {
+    border-color: #e08a2e;
+    box-shadow: 0 0 0 2px #e08a2e55;
+    opacity: 1;
+    font-weight: bold;
+  }
+  .editor {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+  }
+  .editor button {
+    font-size: 1em;
+    padding: 6px 14px;
+    cursor: pointer;
+  }
+  .editor button:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  #selectionInfo {
+    font-size: 0.9em;
   }
   footer {
     margin-top: 3rem;
@@ -292,6 +324,12 @@
 <div id="nowPlaying">停止中</div>
 <div id="noteChips"></div>
 
+<div class="editor">
+  <button id="upBtn" type="button" title="半音上げる (↑キー)" disabled>▲ 半音上げる</button>
+  <button id="downBtn" type="button" title="半音下げる (↓キー)" disabled>▼ 半音下げる</button>
+  <span id="selectionInfo" class="hint">音符をクリックすると選べます</span>
+</div>
+
 <script>
 (function () {
   "use strict";
@@ -356,16 +394,139 @@
   const noteChipsEl = document.getElementById("noteChips");
   const playBtn = document.getElementById("playBtn");
   const stopBtn = document.getElementById("stopBtn");
+  const upBtn = document.getElementById("upBtn");
+  const downBtn = document.getElementById("downBtn");
+  const selectionInfoEl = document.getElementById("selectionInfo");
 
-  function renderChips(notes) {
+  let notes = [];          // 今テキストエリアに入っている音符(startの昇順)
+  let selectedIndex = -1;  // 選択中の音符の位置(-1は未選択)
+
+  // 単音の試し聞き用。再生用のaudioCtxは停止時にcloseするので別にしておく
+  let previewCtx = null;
+
+  function previewNote(midi) {
+    if (!previewCtx) {
+      previewCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (previewCtx.state === "suspended") {
+      previewCtx.resume();
+    }
+    playNote(previewCtx, midiToFreq(midi), previewCtx.currentTime + 0.01, 0.35, PEAK_GAIN);
+  }
+
+  function renderChips() {
     noteChipsEl.innerHTML = "";
-    notes.forEach((n) => {
-      const chip = document.createElement("span");
+    notes.forEach((n, i) => {
+      const chip = document.createElement("button");
+      chip.type = "button";
       chip.className = "note-chip";
+      chip.dataset.index = String(i);
       chip.textContent = n.note || `midi ${n.midi}`;
       noteChipsEl.appendChild(chip);
     });
+    updateSelectionUI();
   }
+
+  function updateSelectionUI() {
+    noteChipsEl.querySelectorAll(".note-chip").forEach((el, i) => {
+      el.classList.toggle("selected", i === selectedIndex);
+    });
+    const hasSelection = selectedIndex >= 0 && selectedIndex < notes.length;
+    upBtn.disabled = !hasSelection;
+    downBtn.disabled = !hasSelection;
+    if (hasSelection) {
+      const n = notes[selectedIndex];
+      selectionInfoEl.textContent =
+        `選択中: ${selectedIndex + 1}番目 ${n.note || ""} (midi ${n.midi}) ／ ↑↓キーでも変えられます`;
+    } else {
+      selectionInfoEl.textContent = "音符をクリックすると選べます";
+    }
+  }
+
+  function selectNote(index) {
+    if (index < 0 || index >= notes.length) return;
+    selectedIndex = index;
+    updateSelectionUI();
+    previewNote(notes[index].midi);
+  }
+
+  // テキストエリアのJSONを読み直してチップを表示し直す
+  function reloadNotes() {
+    let parsed;
+    try {
+      parsed = parseNotes(jsonInputEl.value);
+    } catch (e) {
+      errorMsgEl.textContent = e.message;
+      notes = [];
+      selectedIndex = -1;
+      noteChipsEl.innerHTML = "";
+      updateSelectionUI();
+      return false;
+    }
+    errorMsgEl.textContent = "";
+    notes = parsed.slice().sort((a, b) => a.start - b.start);
+    if (selectedIndex >= notes.length) selectedIndex = -1;
+    renderChips();
+    return true;
+  }
+
+  // ---- 音の高さを直す ----------------------------------------------------
+  const NOTE_NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
+
+  function midiToName(midi) {
+    return NOTE_NAMES[midi % 12] + (Math.floor(midi / 12) - 1);
+  }
+
+  // 選択中の音符を半音単位で上下させる(長さ start / duration は触らない)
+  function shiftSelected(semitones) {
+    if (selectedIndex < 0 || selectedIndex >= notes.length) return;
+    const note = notes[selectedIndex];
+    const newMidi = note.midi + semitones;
+    if (newMidi < 0 || newMidi > 127) return; // MIDIの範囲外には行かない
+
+    note.midi = newMidi;
+    note.note = midiToName(newMidi);
+
+    const chip = noteChipsEl.querySelectorAll(".note-chip")[selectedIndex];
+    if (chip) chip.textContent = note.note;
+    updateSelectionUI();
+    writeBackJson();
+    previewNote(newMidi);
+  }
+
+  // 直した結果をテキストエリアのJSONに書き戻す
+  // (inputイベントで選択が外れないよう、書き戻し中はハンドラを黙らせる)
+  let writingBack = false;
+  function writeBackJson() {
+    writingBack = true;
+    jsonInputEl.value = JSON.stringify(notes, null, 2);
+    writingBack = false;
+  }
+
+  upBtn.addEventListener("click", () => shiftSelected(1));
+  downBtn.addEventListener("click", () => shiftSelected(-1));
+
+  // 上下矢印キーでも変えられるようにする
+  document.addEventListener("keydown", (e) => {
+    if (e.target === jsonInputEl) return;          // JSONを編集中は普通の矢印キー
+    if (selectedIndex < 0) return;
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+    e.preventDefault();                            // ページのスクロールを止める
+    shiftSelected(e.key === "ArrowUp" ? 1 : -1);
+  });
+
+  noteChipsEl.addEventListener("click", (e) => {
+    const chip = e.target.closest(".note-chip");
+    if (!chip) return;
+    selectNote(Number(chip.dataset.index));
+  });
+
+  // ユーザーがJSONを直接書き換えたら、チップも作り直す
+  jsonInputEl.addEventListener("input", () => {
+    if (writingBack) return;
+    selectedIndex = -1;
+    reloadNotes();
+  });
 
   function clearTimers() {
     timers.forEach((id) => clearTimeout(id));
@@ -389,19 +550,10 @@
   }
 
   function startPlayback() {
-    let notes;
-    try {
-      notes = parseNotes(jsonInputEl.value);
-    } catch (e) {
-      errorMsgEl.textContent = e.message;
-      return;
-    }
-    errorMsgEl.textContent = "";
+    if (!reloadNotes()) return;
 
     stopPlayback(); // 念のため前の再生を止めてからやり直す
 
-    notes = notes.slice().sort((a, b) => a.start - b.start);
-    renderChips(notes);
     const chipEls = noteChipsEl.querySelectorAll(".note-chip");
 
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -429,6 +581,8 @@
 
   playBtn.addEventListener("click", startPlayback);
   stopBtn.addEventListener("click", stopPlayback);
+
+  reloadNotes(); // ページを開いた時点でチップを出しておく
 })();
 </script>
 
