@@ -1,0 +1,1131 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>メロディ・バリエーション比較</title>
+<meta name="description" content="鼻歌から取り出したメロディに少しずつ変化を加えた候補を作り、聞き比べながらフレーズを磨いていくページです。">
+<style>
+  :root {
+    color-scheme: light dark;
+  }
+  body {
+    font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+    max-width: 960px;
+    margin: 24px auto;
+    padding: 0 16px;
+    line-height: 1.6;
+  }
+  h1 { font-size: 1.3em; }
+  h2 { font-size: 1.05em; margin-top: 2em; }
+  .hint {
+    font-size: 0.85em;
+    opacity: 0.75;
+  }
+  textarea {
+    width: 100%;
+    box-sizing: border-box;
+    font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+    font-size: 0.85em;
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid #8886;
+  }
+  #jsonInput { height: 140px; }
+  .error {
+    color: #d9534f;
+    font-size: 0.9em;
+    min-height: 1.2em;
+  }
+  button {
+    font-size: 0.95em;
+    padding: 7px 16px;
+    cursor: pointer;
+  }
+  button:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  section {
+    border: 1px solid #8884;
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin: 14px 0;
+  }
+  .origin-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  #originInfo {
+    font-size: 0.9em;
+    opacity: 0.8;
+  }
+  .controls-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+  #bpmSlider {
+    width: 200px;
+    vertical-align: middle;
+  }
+  .mode-choice label {
+    margin-right: 12px;
+    cursor: pointer;
+  }
+  .candidates {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .candidate {
+    border: 1px solid #8886;
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  .candidate-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+  .candidate-title {
+    font-weight: bold;
+    min-width: 6em;
+  }
+  .candidate-detail {
+    font-size: 0.82em;
+    opacity: 0.75;
+  }
+  .candidate textarea.memo {
+    height: 44px;
+    font-family: inherit;
+    font-size: 0.9em;
+    margin-top: 4px;
+  }
+  .extract-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 10px 0;
+  }
+  .extract-chip {
+    border: 1px solid #8886;
+    border-radius: 6px;
+    padding: 3px 7px;
+    font-size: 0.78em;
+    opacity: 0.55;
+  }
+  .extract-chip.in-range {
+    border-color: #e08a2e;
+    background: #e08a2e33;
+    opacity: 1;
+    font-weight: bold;
+  }
+  .range-inputs input[type="number"] {
+    width: 4.5em;
+    padding: 5px 6px;
+  }
+  #historyList {
+    font-size: 0.85em;
+  }
+  #historyList div {
+    padding: 4px 0;
+    border-bottom: 1px solid #8883;
+  }
+  #currentOnlyJson {
+    height: 160px;
+    margin-bottom: 8px;
+  }
+  #dumpJson {
+    height: 260px;
+  }
+  footer {
+    margin-top: 3rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid #8884;
+    font-size: 0.8125rem;
+    opacity: 0.75;
+  }
+  footer a {
+    color: #4a90d9;
+    text-decoration: none;
+  }
+  footer a:hover,
+  footer a:focus-visible {
+    text-decoration: underline;
+  }
+</style>
+</head>
+<body>
+
+<h1>メロディ・バリエーション比較</h1>
+<p class="hint">
+  メロディに少しずつ変化を加えた候補を5本作り、聞き比べながら良いフレーズに近づけていくページです。
+  試せるように音符データ(JSON)が最初から入っているので、そのまま「読み込む」を押してみてください。
+</p>
+
+<section id="loadSection">
+  <textarea id="jsonInput" placeholder='[{"note": "C4", "midi": 60, "start": 0.0, "duration": 0.5}, ...]'>[
+  {
+    "note": "C3",
+    "midi": 48,
+    "start": 0.971,
+    "duration": 0.117
+  },
+  {
+    "note": "C3",
+    "midi": 48,
+    "start": 1.163,
+    "duration": 0.107
+  },
+  {
+    "note": "C♯3",
+    "midi": 49,
+    "start": 1.344,
+    "duration": 0.341
+  },
+  {
+    "note": "A♯2",
+    "midi": 46,
+    "start": 1.771,
+    "duration": 0.32
+  },
+  {
+    "note": "G♯2",
+    "midi": 44,
+    "start": 2.187,
+    "duration": 0.341
+  },
+  {
+    "note": "C3",
+    "midi": 48,
+    "start": 2.603,
+    "duration": 0.331
+  },
+  {
+    "note": "C♯3",
+    "midi": 49,
+    "start": 3.019,
+    "duration": 0.299
+  },
+  {
+    "note": "E3",
+    "midi": 52,
+    "start": 3.392,
+    "duration": 0.341
+  },
+  {
+    "note": "F♯3",
+    "midi": 54,
+    "start": 3.797,
+    "duration": 0.331
+  },
+  {
+    "note": "A2",
+    "midi": 45,
+    "start": 4.224,
+    "duration": 0.288
+  },
+  {
+    "note": "A3",
+    "midi": 57,
+    "start": 4.619,
+    "duration": 0.608
+  },
+  {
+    "note": "A♯3",
+    "midi": 58,
+    "start": 5.301,
+    "duration": 0.672
+  },
+  {
+    "note": "G♯3",
+    "midi": 56,
+    "start": 6.773,
+    "duration": 0.096
+  },
+  {
+    "note": "F♯3",
+    "midi": 54,
+    "start": 6.965,
+    "duration": 0.352
+  },
+  {
+    "note": "F3",
+    "midi": 53,
+    "start": 7.381,
+    "duration": 0.107
+  },
+  {
+    "note": "D♯3",
+    "midi": 51,
+    "start": 7.584,
+    "duration": 0.288
+  },
+  {
+    "note": "B2",
+    "midi": 47,
+    "start": 7.989,
+    "duration": 0.373
+  },
+  {
+    "note": "G♯2",
+    "midi": 44,
+    "start": 8.437,
+    "duration": 0.363
+  },
+  {
+    "note": "C3",
+    "midi": 48,
+    "start": 8.864,
+    "duration": 0.32
+  },
+  {
+    "note": "C♯3",
+    "midi": 49,
+    "start": 9.28,
+    "duration": 0.309
+  },
+  {
+    "note": "D3",
+    "midi": 50,
+    "start": 9.653,
+    "duration": 0.341
+  },
+  {
+    "note": "F3",
+    "midi": 53,
+    "start": 10.155,
+    "duration": 0.32
+  },
+  {
+    "note": "A2",
+    "midi": 45,
+    "start": 10.581,
+    "duration": 0.256
+  },
+  {
+    "note": "D3",
+    "midi": 50,
+    "start": 11.029,
+    "duration": 0.299
+  },
+  {
+    "note": "C♯3",
+    "midi": 49,
+    "start": 11.456,
+    "duration": 0.384
+  },
+  {
+    "note": "C3",
+    "midi": 48,
+    "start": 12.555,
+    "duration": 0.085
+  },
+  {
+    "note": "C3",
+    "midi": 48,
+    "start": 12.747,
+    "duration": 0.096
+  },
+  {
+    "note": "C♯3",
+    "midi": 49,
+    "start": 12.907,
+    "duration": 0.096
+  },
+  {
+    "note": "C3",
+    "midi": 48,
+    "start": 13.077,
+    "duration": 0.139
+  },
+  {
+    "note": "A♯2",
+    "midi": 46,
+    "start": 13.493,
+    "duration": 0.139
+  }
+]</textarea>
+  <div class="error" id="loadError"></div>
+  <button id="loadBtn" type="button">読み込む</button>
+</section>
+
+<section id="originSection" hidden>
+  <h2>元のメロディ</h2>
+  <div class="origin-row">
+    <button id="originPlayBtn" type="button">▶ 再生</button>
+    <span id="originInfo"></span>
+  </div>
+</section>
+
+<section id="quantizeSection" hidden>
+  <h2>拍に揃える(クオンタイズ)</h2>
+  <p class="hint">元のメロディの音符を、指定したBPM・細かさの拍にきっちり揃えます。</p>
+  <div class="controls-row">
+    <label for="bpmSlider">BPM: <span id="bpmValue">80</span></label>
+    <input type="range" id="bpmSlider" min="60" max="140" value="80" step="1">
+  </div>
+  <div class="controls-row">
+    <span class="mode-choice">
+      <label><input type="radio" name="grid" value="4" checked> 4分音符</label>
+      <label><input type="radio" name="grid" value="8"> 8分音符</label>
+      <label><input type="radio" name="grid" value="16"> 16分音符</label>
+    </span>
+    <button id="quantizeBtn" type="button">揃える</button>
+  </div>
+  <div class="origin-row" id="quantizeResultRow" hidden>
+    <button id="quantizePlayBtn" type="button">▶ 再生</button>
+    <span id="quantizeInfo"></span>
+    <button id="quantizeAdoptBtn" type="button">これを起点にする</button>
+  </div>
+</section>
+
+<section id="extractSection" hidden>
+  <h2>一部を切り出す</h2>
+  <p class="hint">今の元のメロディから、音符の番号で範囲を指定して切り出します。</p>
+  <div class="extract-chips" id="extractChipsEl"></div>
+  <div class="controls-row range-inputs">
+    <label>開始番号: <input type="number" id="extractStart" min="1" value="1"></label>
+    <label>終了番号: <input type="number" id="extractEnd" min="1" value="1"></label>
+    <button id="extractBtn" type="button">切り出す</button>
+  </div>
+  <div class="origin-row" id="extractResultRow" hidden>
+    <button id="extractPlayBtn" type="button">▶ 再生</button>
+    <span id="extractInfo"></span>
+    <button id="extractAdoptBtn" type="button">これを起点にする</button>
+  </div>
+</section>
+
+<section id="genSection" hidden>
+  <h2>候補の生成</h2>
+  <div class="controls-row">
+    <span class="mode-choice">
+      <label><input type="radio" name="mode" value="pitch" checked> 音の高さ</label>
+      <label><input type="radio" name="mode" value="rhythm"> リズム</label>
+    </span>
+    <button id="generateBtn" type="button">🎲 候補を生成する</button>
+  </div>
+  <div class="error" id="genError"></div>
+  <div class="candidates" id="candidatesEl"></div>
+</section>
+
+<section id="historySection" hidden>
+  <h2>選んだ履歴</h2>
+  <div id="historyList"></div>
+</section>
+
+<section id="currentOnlySection" hidden>
+  <h2>今の起点の音符データ</h2>
+  <p class="hint">
+    履歴やメモを含まない、音符データだけの配列です(analyze.pyの出力と同じ形式)。
+    この内容を上の「元のメロディ」欄に貼れば、そのまま再開できます。
+  </p>
+  <textarea id="currentOnlyJson" readonly></textarea>
+  <button id="currentOnlyCopyBtn" type="button">📋 コピー</button>
+</section>
+
+<section id="dumpSection" hidden>
+  <h2>全体のJSON</h2>
+  <p class="hint">元のメロディ・これまで選んだ履歴・メモをまとめたものです。コピーして手元に保存できます。</p>
+  <textarea id="dumpJson" readonly></textarea>
+</section>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---- 音の設定(following-wind-site/humming/index.html と同じ作り方を流用) ------
+  const PEAK_GAIN = 0.15;
+  const FADE_TIME = 0.03;
+
+  function midiToFreq(midi) {
+    return 440 * Math.pow(2, (midi - 69) / 12);
+  }
+
+  function playNote(ctx, freq, startTime, duration, peakGain) {
+    const osc = ctx.createOscillator();
+    osc.type = "triangle";
+    osc.frequency.value = freq;
+
+    const gain = ctx.createGain();
+    const fade = Math.min(FADE_TIME, duration / 4);
+    gain.gain.setValueAtTime(0, startTime);
+    gain.gain.linearRampToValueAtTime(peakGain, startTime + fade);
+    gain.gain.setValueAtTime(peakGain, startTime + duration - fade);
+    gain.gain.linearRampToValueAtTime(0, startTime + duration);
+
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(startTime);
+    osc.stop(startTime + duration + 0.02);
+  }
+
+  function parseNotes(text) {
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      throw new Error("JSONの形式が正しくありません: " + e.message);
+    }
+    if (!Array.isArray(data)) {
+      throw new Error("JSONは配列である必要があります([{...}, {...}])");
+    }
+    if (data.length === 0) {
+      throw new Error("音符が1つもありません");
+    }
+    data.forEach((n, i) => {
+      if (typeof n.midi !== "number" || typeof n.start !== "number" || typeof n.duration !== "number") {
+        throw new Error(`${i + 1}番目の要素に midi/start/duration が数値で揃っていません`);
+      }
+    });
+    return data;
+  }
+
+  const NOTE_NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
+  function midiToName(midi) {
+    return NOTE_NAMES[midi % 12] + (Math.floor(midi / 12) - 1);
+  }
+
+  // ---- 再生(1つのメロディだけを鳴らす。同時に鳴るのは常に1本まで) --------------
+  let audioCtx = null;
+  let activeTimers = [];
+  let activeButton = null;
+
+  function stopPlayback() {
+    activeTimers.forEach((id) => clearTimeout(id));
+    activeTimers = [];
+    if (audioCtx) {
+      audioCtx.close();
+      audioCtx = null;
+    }
+    if (activeButton) {
+      activeButton.textContent = "▶ 再生";
+      activeButton = null;
+    }
+  }
+
+  function playMelody(notes, button) {
+    const wasThisButton = activeButton === button;
+    stopPlayback();
+    if (wasThisButton) return; // 再生中の再生ボタンを押したら、止めるだけ
+    if (!notes || notes.length === 0) return;
+
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    activeButton = button;
+    button.textContent = "■ 停止";
+
+    const sorted = notes.slice().sort((a, b) => a.start - b.start);
+    const baseTime = audioCtx.currentTime + 0.05;
+    sorted.forEach((n) => {
+      playNote(audioCtx, midiToFreq(n.midi), baseTime + n.start, n.duration, PEAK_GAIN);
+    });
+
+    const last = sorted[sorted.length - 1];
+    const totalMs = (last.start + last.duration) * 1000 + 80;
+    activeTimers.push(setTimeout(stopPlayback, totalMs));
+  }
+
+  // ---- 候補生成: 音の高さ ----------------------------------------------------
+  // count: 動かす音符の数 / maxShift: 1音あたりの最大移動幅(半音)
+  const PITCH_LEVELS = [
+    { count: 1, maxShift: 1 },
+    { count: 2, maxShift: 2 },
+    { count: 3, maxShift: 3 },
+    { count: 4, maxShift: 5 },
+    { count: 5, maxShift: 7 },
+  ];
+
+  function clampMidi(m) {
+    return Math.max(0, Math.min(127, m));
+  }
+
+  // 0を除いた -max〜max の整数(半音の移動量)
+  function randomNonZeroInt(max) {
+    const m = Math.max(1, max);
+    let v = 0;
+    while (v === 0) {
+      v = Math.floor(Math.random() * (2 * m + 1)) - m;
+    }
+    return v;
+  }
+
+  function pickRandomIndices(total, count) {
+    const idx = Array.from({ length: total }, (_, i) => i);
+    for (let i = idx.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [idx[i], idx[j]] = [idx[j], idx[i]];
+    }
+    return idx.slice(0, Math.min(count, idx.length));
+  }
+
+  function generatePitchCandidate(origin, level) {
+    const notes = origin.map((n) => ({ ...n }));
+    const targets = pickRandomIndices(notes.length, level.count);
+    targets.forEach((i) => {
+      const shift = randomNonZeroInt(level.maxShift);
+      const newMidi = clampMidi(notes[i].midi + shift);
+      notes[i].midi = newMidi;
+      notes[i].note = midiToName(newMidi);
+    });
+    return notes;
+  }
+
+  // ---- 候補生成: リズム ----------------------------------------------------
+  // strength: 音符の長さ・音符間の無音を、それぞれ最大何割まで揺らすか
+  const RHYTHM_LEVELS = [0.1, 0.2, 0.35, 0.5, 0.7];
+
+  function round3(x) {
+    return Math.round(x * 1000) / 1000;
+  }
+
+  // v(元の長さ)を強さstrengthで揺らす。0はそのまま0(揺らす対象が無い)
+  function jitter(v, strength, floor) {
+    if (v <= 0) return 0;
+    const factor = 1 + (Math.random() * 2 - 1) * strength;
+    return Math.max(floor, v * factor);
+  }
+
+  function generateRhythmCandidate(origin, strength) {
+    const notes = origin.map((n) => ({ ...n }));
+    const n = notes.length;
+
+    // 音符の長さと、音符と音符の間の無音(休符)の両方を揺らす対象にする。
+    // 休符も含めた合計を元と揃えないと、詰め直したときに休符ぶん短くなってしまう
+    const durations = origin.map((note) => note.duration);
+    const gaps = [];
+    for (let i = 0; i < n - 1; i++) {
+      gaps.push(Math.max(0, origin[i + 1].start - (origin[i].start + origin[i].duration)));
+    }
+
+    const newDurations = durations.map((d) => jitter(d, strength, 0.05));
+    const newGaps = gaps.map((g) => jitter(g, strength, 0));
+
+    const originalTotal = durations.reduce((s, v) => s + v, 0) + gaps.reduce((s, v) => s + v, 0);
+    const newTotal = newDurations.reduce((s, v) => s + v, 0) + newGaps.reduce((s, v) => s + v, 0);
+    const scale = originalTotal / newTotal;
+
+    // 音符と休符を交互に積み上げてstartを詰め直す(比率は保ったまま長さだけ揺れる)
+    let t = origin[0].start;
+    notes.forEach((note, i) => {
+      const d = newDurations[i] * scale;
+      note.start = round3(t);
+      note.duration = round3(d);
+      t += d;
+      if (i < n - 1) {
+        t += newGaps[i] * scale;
+      }
+    });
+    return notes;
+  }
+
+  function generateCandidates(origin, mode) {
+    if (mode === "rhythm") {
+      return RHYTHM_LEVELS.map((strength) => generateRhythmCandidate(origin, strength));
+    }
+    return PITCH_LEVELS.map((level) => generatePitchCandidate(origin, level));
+  }
+
+  // ---- 拍に揃える(クオンタイズ) ----------------------------------------------------
+  function roundToGrid(v, gridUnit) {
+    return Math.round(v / gridUnit) * gridUnit;
+  }
+
+  // division: 1拍を何等分するか(4=4分音符、8=8分音符、16=16分音符)
+  function quantizeMelody(origin, bpm, division) {
+    const beatDur = 60 / bpm;
+    const gridUnit = (beatDur * 4) / division;
+
+    const sorted = origin.slice().sort((a, b) => a.start - b.start);
+    const gridStarts = sorted.map((n) => roundToGrid(n.start, gridUnit));
+    // durationは最低1グリッド分は確保する(丸めて0になると音が消えてしまうため)
+    const gridDurations = sorted.map((n) => Math.max(gridUnit, roundToGrid(n.duration, gridUnit)));
+
+    const notes = sorted.map((n) => ({ ...n }));
+    let prevEnd = -Infinity;
+    const deviations = [];
+    notes.forEach((n, i) => {
+      let start = gridStarts[i];
+      if (start < prevEnd) start = prevEnd; // 重なる場合は前の音の直後まで詰める
+      deviations.push(Math.abs(start - sorted[i].start));
+      n.start = round3(start);
+      n.duration = round3(gridDurations[i]);
+      prevEnd = start + gridDurations[i];
+    });
+
+    const last = notes[notes.length - 1];
+    return {
+      notes,
+      noteCount: notes.length,
+      span: last.start + last.duration - notes[0].start,
+      avgDeviation: deviations.reduce((s, v) => s + v, 0) / deviations.length,
+    };
+  }
+
+  // ---- 一部を切り出す ----------------------------------------------------
+  // startNum/endNum は1始まりの音符の番号(両端を含む)
+  function extractMelody(origin, startNum, endNum) {
+    const s = Math.max(1, Math.min(startNum, origin.length));
+    const e = Math.max(s, Math.min(endNum, origin.length));
+
+    const notes = origin.slice(s - 1, e).map((n) => ({ ...n }));
+    const offset = notes[0].start;
+    notes.forEach((n) => {
+      n.start = round3(n.start - offset); // 先頭が0になるよう詰め直す(間の無音の比率はそのまま)
+    });
+
+    const last = notes[notes.length - 1];
+    return {
+      notes,
+      noteCount: notes.length,
+      span: last.start + last.duration - notes[0].start,
+      startNum: s,
+      endNum: e,
+    };
+  }
+
+  // ---- UI ----------------------------------------------------
+  const jsonInputEl = document.getElementById("jsonInput");
+  const loadErrorEl = document.getElementById("loadError");
+  const loadBtn = document.getElementById("loadBtn");
+
+  const originSection = document.getElementById("originSection");
+  const originPlayBtn = document.getElementById("originPlayBtn");
+  const originInfoEl = document.getElementById("originInfo");
+
+  const quantizeSection = document.getElementById("quantizeSection");
+  const bpmSlider = document.getElementById("bpmSlider");
+  const bpmValueEl = document.getElementById("bpmValue");
+  const gridRadios = document.querySelectorAll('input[name="grid"]');
+  const quantizeBtn = document.getElementById("quantizeBtn");
+  const quantizeResultRow = document.getElementById("quantizeResultRow");
+  const quantizePlayBtn = document.getElementById("quantizePlayBtn");
+  const quantizeInfoEl = document.getElementById("quantizeInfo");
+  const quantizeAdoptBtn = document.getElementById("quantizeAdoptBtn");
+
+  const extractSection = document.getElementById("extractSection");
+  const extractChipsEl = document.getElementById("extractChipsEl");
+  const extractStartInput = document.getElementById("extractStart");
+  const extractEndInput = document.getElementById("extractEnd");
+  const extractBtn = document.getElementById("extractBtn");
+  const extractResultRow = document.getElementById("extractResultRow");
+  const extractPlayBtn = document.getElementById("extractPlayBtn");
+  const extractInfoEl = document.getElementById("extractInfo");
+  const extractAdoptBtn = document.getElementById("extractAdoptBtn");
+
+  const genSection = document.getElementById("genSection");
+  const genErrorEl = document.getElementById("genError");
+  const generateBtn = document.getElementById("generateBtn");
+  const candidatesEl = document.getElementById("candidatesEl");
+  const modeRadios = document.querySelectorAll('input[name="mode"]');
+
+  const historySection = document.getElementById("historySection");
+  const historyListEl = document.getElementById("historyList");
+
+  const currentOnlySection = document.getElementById("currentOnlySection");
+  const currentOnlyJsonEl = document.getElementById("currentOnlyJson");
+  const currentOnlyCopyBtn = document.getElementById("currentOnlyCopyBtn");
+
+  const dumpSection = document.getElementById("dumpSection");
+  const dumpJsonEl = document.getElementById("dumpJson");
+
+  let originalMelody = null;  // 最初に読み込んだメロディ(履歴の起点として不変)
+  let currentOrigin = null;   // 今の「元のメロディ」
+  let quantizeResult = null;  // 直近に「揃える」した結果(起点を変えるとクリアする)
+  let extractResult = null;   // 直近に「切り出す」した結果(起点を変えるとクリアする)
+  let candidates = [];        // 今表示している5候補
+  let history = [];           // 選んだ結果の履歴
+
+  function currentMode() {
+    return document.querySelector('input[name="mode"]:checked').value;
+  }
+
+  function totalDuration(notes) {
+    const last = notes.reduce((a, b) => (a.start + a.duration > b.start + b.duration ? a : b));
+    return last.start + last.duration;
+  }
+
+  function renderOrigin() {
+    originInfoEl.textContent =
+      `音符 ${currentOrigin.length} 個 ／ 長さ ${totalDuration(currentOrigin).toFixed(2)} 秒`;
+  }
+
+  function candidateLabel(mode, i) {
+    if (mode === "rhythm") {
+      return `候補${i + 1}(揺れ幅 ${Math.round(RHYTHM_LEVELS[i] * 100)}%)`;
+    }
+    const level = PITCH_LEVELS[i];
+    return `候補${i + 1}(${level.count}音 / 最大${level.maxShift}半音)`;
+  }
+
+  function renderCandidates() {
+    const mode = currentMode();
+    candidatesEl.innerHTML = "";
+    candidates.forEach((notes, i) => {
+      const card = document.createElement("div");
+      card.className = "candidate";
+
+      const head = document.createElement("div");
+      head.className = "candidate-head";
+
+      const title = document.createElement("span");
+      title.className = "candidate-title";
+      title.textContent = candidateLabel(mode, i);
+
+      const playBtn = document.createElement("button");
+      playBtn.type = "button";
+      playBtn.textContent = "▶ 再生";
+      playBtn.addEventListener("click", () => playMelody(notes, playBtn));
+
+      const chooseBtn = document.createElement("button");
+      chooseBtn.type = "button";
+      chooseBtn.textContent = "この候補を次の起点にする";
+      chooseBtn.addEventListener("click", () => chooseCandidate(i));
+
+      const copyBtn = document.createElement("button");
+      copyBtn.type = "button";
+      copyBtn.textContent = "📋 JSONをコピー";
+      copyBtn.addEventListener("click", () => copyCandidateJson(i, copyBtn));
+
+      const detail = document.createElement("span");
+      detail.className = "candidate-detail";
+      detail.textContent = `長さ ${totalDuration(notes).toFixed(2)} 秒`;
+
+      head.appendChild(title);
+      head.appendChild(playBtn);
+      head.appendChild(chooseBtn);
+      head.appendChild(copyBtn);
+      head.appendChild(detail);
+
+      const memo = document.createElement("textarea");
+      memo.className = "memo";
+      memo.placeholder = "この候補についてのメモ";
+      memo.dataset.index = String(i);
+
+      card.appendChild(head);
+      card.appendChild(memo);
+      candidatesEl.appendChild(card);
+    });
+  }
+
+  // ---- 候補のJSONをコピー(Vaultへの貼り付け用) ----------------------------------------------------
+  function copyTextToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text);
+    }
+    // clipboard APIが無い環境向けの昔ながらのフォールバック
+    return new Promise((resolve, reject) => {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      let ok = false;
+      try {
+        ok = document.execCommand("copy");
+      } catch (e) {
+        ok = false;
+      }
+      document.body.removeChild(ta);
+      ok ? resolve() : reject(new Error("コピーできませんでした"));
+    });
+  }
+
+  function showCopyFeedback(button, message) {
+    const original = button.dataset.originalLabel || button.textContent;
+    button.dataset.originalLabel = original;
+    button.textContent = message;
+    button.disabled = true;
+    setTimeout(() => {
+      button.textContent = original;
+      button.disabled = false;
+    }, 1500);
+  }
+
+  function buildCandidateJson(i) {
+    const memoEl = candidatesEl.querySelectorAll("textarea.memo")[i];
+    return {
+      round: history.length + 1,        // 何周目か(履歴に積まれた回数+1)
+      mode: currentMode(),
+      level: i + 1,
+      notes: candidates[i],
+      memo: memoEl ? memoEl.value : "",
+      quantize: {
+        bpm: currentBpm(),
+        division: currentDivision(),
+      },
+      extractRange: {
+        start: Number(extractStartInput.value),
+        end: Number(extractEndInput.value),
+      },
+    };
+  }
+
+  function copyCandidateJson(i, button) {
+    const text = JSON.stringify(buildCandidateJson(i), null, 2);
+    copyTextToClipboard(text)
+      .then(() => showCopyFeedback(button, "コピーしました"))
+      .catch(() => showCopyFeedback(button, "コピーに失敗しました"));
+  }
+
+  function getMemoValues() {
+    const els = candidatesEl.querySelectorAll("textarea.memo");
+    return Array.from(els).map((el) => el.value);
+  }
+
+  function generate() {
+    genErrorEl.textContent = "";
+    if (!currentOrigin || currentOrigin.length === 0) {
+      genErrorEl.textContent = "元のメロディがありません";
+      return;
+    }
+    candidates = generateCandidates(currentOrigin, currentMode());
+    renderCandidates();
+    updateCurrentOnly();
+    updateDump();
+  }
+
+  // 「今の起点の音符データだけ」の欄。履歴・メモ・設定は含めない
+  function updateCurrentOnly() {
+    if (!currentOrigin) {
+      currentOnlySection.hidden = true;
+      return;
+    }
+    currentOnlySection.hidden = false;
+    currentOnlyJsonEl.value = JSON.stringify(currentOrigin, null, 2);
+  }
+
+  function chooseCandidate(i) {
+    const mode = currentMode();
+    history.push({
+      mode,
+      origin: currentOrigin,
+      candidates: candidates.map((notes, idx) => ({
+        level: idx + 1,
+        notes,
+      })),
+      memos: getMemoValues(),
+      chosen: i,
+    });
+
+    currentOrigin = candidates[i];
+    renderOrigin();
+    renderHistory();
+    renderExtractChips();
+    resetQuantizeResult();
+    resetExtractResult();
+    generate();
+  }
+
+  // ---- 拍に揃える(クオンタイズ)のUI ----------------------------------------------------
+  function currentBpm() {
+    return Number(bpmSlider.value);
+  }
+
+  function currentDivision() {
+    return Number(document.querySelector('input[name="grid"]:checked').value);
+  }
+
+  function resetQuantizeResult() {
+    quantizeResult = null;
+    quantizeResultRow.hidden = true;
+  }
+
+  function runQuantize() {
+    if (!currentOrigin || currentOrigin.length === 0) return;
+    quantizeResult = quantizeMelody(currentOrigin, currentBpm(), currentDivision());
+    quantizeResultRow.hidden = false;
+    quantizeInfoEl.textContent =
+      `音符 ${quantizeResult.noteCount} 個 ／ 長さ ${quantizeResult.span.toFixed(2)} 秒 ／ ` +
+      `平均のずれ ${quantizeResult.avgDeviation.toFixed(3)} 秒`;
+  }
+
+  function adoptQuantizeResult() {
+    if (!quantizeResult) return;
+    currentOrigin = quantizeResult.notes;
+    renderOrigin();
+    renderExtractChips();
+    resetQuantizeResult();
+    resetExtractResult();
+    generate();
+  }
+
+  // ---- 一部を切り出すUI ----------------------------------------------------
+  function renderExtractChips() {
+    extractChipsEl.innerHTML = "";
+    currentOrigin.forEach((n, i) => {
+      const chip = document.createElement("span");
+      chip.className = "extract-chip";
+      chip.dataset.index = String(i);
+      chip.textContent = n.note || `midi ${n.midi}`;
+      extractChipsEl.appendChild(chip);
+    });
+    extractStartInput.min = "1";
+    extractStartInput.max = String(currentOrigin.length);
+    extractEndInput.min = "1";
+    extractEndInput.max = String(currentOrigin.length);
+    extractStartInput.value = "1";
+    extractEndInput.value = String(currentOrigin.length);
+    updateExtractHighlight();
+  }
+
+  function updateExtractHighlight() {
+    const s = Number(extractStartInput.value) || 1;
+    const e = Number(extractEndInput.value) || 1;
+    extractChipsEl.querySelectorAll(".extract-chip").forEach((el, i) => {
+      const num = i + 1;
+      el.classList.toggle("in-range", num >= s && num <= e);
+    });
+  }
+
+  function resetExtractResult() {
+    extractResult = null;
+    extractResultRow.hidden = true;
+  }
+
+  // 4/4拍子と仮定して、指定の長さ(秒)が何小節ぶんかを求める
+  function barsText(span) {
+    const bpm = currentBpm();
+    const barDuration = ((60 / bpm) * 4);
+    return `${(span / barDuration).toFixed(2)} 小節(BPM${bpm})`;
+  }
+
+  function runExtract() {
+    if (!currentOrigin || currentOrigin.length === 0) return;
+    extractResult = extractMelody(
+      currentOrigin,
+      Number(extractStartInput.value),
+      Number(extractEndInput.value)
+    );
+    extractResultRow.hidden = false;
+    extractInfoEl.textContent =
+      `音符 ${extractResult.noteCount} 個 ／ 長さ ${extractResult.span.toFixed(2)} 秒 ／ ` +
+      barsText(extractResult.span);
+    // 範囲外を指定していた場合、実際に切り出した番号に入力欄をそろえる
+    extractStartInput.value = String(extractResult.startNum);
+    extractEndInput.value = String(extractResult.endNum);
+    updateExtractHighlight();
+  }
+
+  function adoptExtractResult() {
+    if (!extractResult) return;
+    currentOrigin = extractResult.notes;
+    renderOrigin();
+    renderExtractChips();
+    resetQuantizeResult();
+    resetExtractResult();
+    generate();
+  }
+
+  function renderHistory() {
+    if (history.length === 0) {
+      historySection.hidden = true;
+      return;
+    }
+    historySection.hidden = false;
+    historyListEl.innerHTML = "";
+    history.forEach((h, i) => {
+      const row = document.createElement("div");
+      const modeLabel = h.mode === "rhythm" ? "リズム" : "音の高さ";
+      const memo = h.memos[h.chosen];
+      row.textContent =
+        `${i + 1}. [${modeLabel}] 候補${h.chosen + 1}を採用` + (memo ? ` ／ メモ: ${memo}` : "");
+      historyListEl.appendChild(row);
+    });
+  }
+
+  function updateDump() {
+    if (!originalMelody) {
+      dumpSection.hidden = true;
+      return;
+    }
+    dumpSection.hidden = false;
+    const data = {
+      original: originalMelody,
+      history: history.map((h) => ({
+        mode: h.mode,
+        origin: h.origin,
+        candidates: h.candidates.map((c, idx) => ({
+          level: c.level,
+          notes: c.notes,
+          memo: h.memos[idx] || "",
+        })),
+        chosen: h.chosen,
+      })),
+      current: currentOrigin,
+    };
+    dumpJsonEl.value = JSON.stringify(data, null, 2);
+  }
+
+  function loadOriginal() {
+    let parsed;
+    try {
+      parsed = parseNotes(jsonInputEl.value);
+    } catch (e) {
+      loadErrorEl.textContent = e.message;
+      return;
+    }
+    loadErrorEl.textContent = "";
+    stopPlayback();
+
+    parsed = parsed.slice().sort((a, b) => a.start - b.start);
+    originalMelody = parsed;
+    currentOrigin = parsed;
+    history = [];
+    candidates = [];
+
+    originSection.hidden = false;
+    quantizeSection.hidden = false;
+    extractSection.hidden = false;
+    genSection.hidden = false;
+    renderOrigin();
+    renderHistory();
+    renderExtractChips();
+    resetQuantizeResult();
+    resetExtractResult();
+    generate();
+  }
+
+  loadBtn.addEventListener("click", loadOriginal);
+  originPlayBtn.addEventListener("click", () => playMelody(currentOrigin, originPlayBtn));
+  generateBtn.addEventListener("click", generate);
+  modeRadios.forEach((r) => r.addEventListener("change", generate));
+
+  bpmSlider.addEventListener("input", () => {
+    bpmValueEl.textContent = bpmSlider.value;
+  });
+  quantizeBtn.addEventListener("click", runQuantize);
+  quantizePlayBtn.addEventListener("click", () => {
+    if (quantizeResult) playMelody(quantizeResult.notes, quantizePlayBtn);
+  });
+  quantizeAdoptBtn.addEventListener("click", adoptQuantizeResult);
+
+  extractStartInput.addEventListener("input", updateExtractHighlight);
+  extractEndInput.addEventListener("input", updateExtractHighlight);
+  extractBtn.addEventListener("click", runExtract);
+  extractPlayBtn.addEventListener("click", () => {
+    if (extractResult) playMelody(extractResult.notes, extractPlayBtn);
+  });
+  extractAdoptBtn.addEventListener("click", adoptExtractResult);
+
+  currentOnlyCopyBtn.addEventListener("click", () => {
+    copyTextToClipboard(currentOnlyJsonEl.value)
+      .then(() => showCopyFeedback(currentOnlyCopyBtn, "コピーしました"))
+      .catch(() => showCopyFeedback(currentOnlyCopyBtn, "コピーに失敗しました"));
+  });
+})();
+</script>
+
+<footer>
+  <a href="../">追い風</a> ／ <a href="../tips/">操作メモ</a> ／ <a href="../books/">読書</a> ／ <a href="../rain/">雨の窓</a> ／ <a href="../hokkaido/">北海道の窓</a> ／ <a href="../chords/">コード進行お試しページ</a> ／ <a href="../humming/">ハミング再生ページ</a>
+</footer>
+
+</body>
+</html>
