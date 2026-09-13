@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "canvas": {"width":1440,"height":900,"background":"#ffffff"},
+  "elements": [
+    {"id":"logo-001","type":"logo","x":90,"y":68,"width":320,"height":55,"text":"↗ Following Wind","fontSize":26,"zIndex":1},
+    {"id":"label-001","type":"label","x":96,"y":242,"width":380,"height":32,"text":"TOOLS, NOTES & A LITTLE TAILWIND","fontSize":14,"color":"#78998d","zIndex":2},
+    {"id":"heading-001","type":"heading","x":90,"y":296,"width":800,"height":110,"text":"Following Wind","fontSize":82,"zIndex":3},
+    {"id":"paragraph-001","type":"paragraph","x":96,"y":447,"width":700,"height":125,"text":"追い風になる小さな道具と、\nあとで効いてくるノート。","fontSize":30,"color":"#587367","zIndex":4},
+    {"id":"circle-001","type":"circle","x":1090,"y":180,"width":160,"height":160,"zIndex":5},
+    {"id":"wind-001","type":"wind","x":930,"y":420,"width":350,"height":125,"zIndex":6},
+    {"id":"line-001","type":"line","x":96,"y":714,"width":1230,"height":2,"background":"#d6e3da","zIndex":7},
+    {"id":"label-002","type":"label","x":96,"y":752,"width":600,"height":36,"text":"MAKE ROOM FOR YOUR NEXT IDEA.","fontSize":14,"color":"#78998d","zIndex":8}
+  ]
+}
