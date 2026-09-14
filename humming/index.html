@@ -383,15 +383,27 @@
 
 <div class="editor">
   <label for="bpmInput">BPM(任意): <input type="number" id="bpmInput" min="40" max="240" style="width:5em;"></label>
-  <span class="hint">指定すると、下の表示に小節線が入り、←→キーでの長さ変更(16分音符単位)が使えます</span>
+  <span class="hint">時間ステップ：BPM指定時は16分音符、未指定時は0.125秒</span>
 </div>
 <div class="piano-roll-wrap" id="pianoRollWrap"></div>
 
 <div class="editor">
-  <button id="upBtn" type="button" title="半音上げる (↑キー)" disabled>▲ 半音上げる</button>
-  <button id="downBtn" type="button" title="半音下げる (↓キー)" disabled>▼ 半音下げる</button>
-  <button id="shortenBtn" type="button" title="16分音符ぶん短くする (←キー)" disabled>◀ 短くする(16分)</button>
-  <button id="lengthenBtn" type="button" title="16分音符ぶん長くする (→キー)" disabled>▶ 長くする(16分)</button>
+  <span role="group" aria-label="音程">音程
+    <button id="downBtn" type="button" title="半音下げる (↓キー)" disabled>▼</button>
+    <button id="upBtn" type="button" title="半音上げる (↑キー)" disabled>▲</button>
+  </span>
+  <span role="group" aria-label="位置">位置
+    <button id="leftBtn" type="button" title="左へ移動 (←キー)" disabled>←</button>
+    <button id="rightBtn" type="button" title="右へ移動 (→キー)" disabled>→</button>
+  </span>
+  <span role="group" aria-label="長さ">長さ
+    <button id="shortenBtn" type="button" title="右端を縮める" disabled>−</button>
+    <button id="lengthenBtn" type="button" title="右端を伸ばす" disabled>＋</button>
+  </span>
+  <button id="undoBtn" type="button" disabled>↶ Undo</button>
+  <button id="redoBtn" type="button" disabled>↷ Redo</button>
+  <button id="addNoteBtn" type="button">＋ 音符追加</button>
+  <button id="deleteNoteBtn" type="button" title="選択音符を削除 (Delete / Backspace)" disabled>削除</button>
   <span id="selectionInfo" class="hint">音符をクリックすると選べます</span>
 </div>
 <div class="editor">
@@ -444,9 +456,7 @@
     if (!Array.isArray(data)) {
       throw new Error("JSONは配列である必要があります([{...}, {...}])");
     }
-    if (data.length === 0) {
-      throw new Error("音符が1つもありません");
-    }
+
     data.forEach((n, i) => {
       if (typeof n.midi !== "number" || typeof n.start !== "number" || typeof n.duration !== "number") {
         throw new Error(`${i + 1}番目の要素に midi/start/duration が数値で揃っていません`);
@@ -462,8 +472,14 @@
   const noteChipsEl = document.getElementById("noteChips");
   const playBtn = document.getElementById("playBtn");
   const stopBtn = document.getElementById("stopBtn");
+  const leftBtn = document.getElementById("leftBtn");
+  const rightBtn = document.getElementById("rightBtn");
   const upBtn = document.getElementById("upBtn");
   const downBtn = document.getElementById("downBtn");
+  const undoBtn = document.getElementById("undoBtn");
+  const redoBtn = document.getElementById("redoBtn");
+  const addNoteBtn = document.getElementById("addNoteBtn");
+  const deleteNoteBtn = document.getElementById("deleteNoteBtn");
   const shortenBtn = document.getElementById("shortenBtn");
   const lengthenBtn = document.getElementById("lengthenBtn");
   const durationHintEl = document.getElementById("durationHint");
@@ -477,6 +493,44 @@
 
   // 単音の試し聞き用。再生用のaudioCtxは停止時にcloseするので別にしておく
   let previewCtx = null;
+  const HISTORY_LIMIT = 50;
+  const undoStack = [];
+  const redoStack = [];
+  let dragBefore = null;
+
+  function snapshot() {
+    return { notes: JSON.parse(JSON.stringify(notes)), selectedIndex };
+  }
+
+  function updateHistoryButtons() {
+    undoBtn.disabled = !undoStack.length;
+    redoBtn.disabled = !redoStack.length;
+  }
+
+  function pushHistory(stack, state) {
+    stack.push(state);
+    if (stack.length > HISTORY_LIMIT) stack.shift();
+  }
+
+  function recordEdit(before) {
+    if (JSON.stringify(before.notes) === JSON.stringify(notes)) return;
+    pushHistory(undoStack, before);
+    redoStack.length = 0;
+    updateHistoryButtons();
+  }
+
+  function restoreHistory(from, to) {
+    if (!from.length || dragBefore) return;
+    pushHistory(to, snapshot());
+    const state = from.pop();
+    notes = JSON.parse(JSON.stringify(state.notes));
+    const selected = notes[state.selectedIndex] || null;
+    commitNoteEdit(selected);
+    updateHistoryButtons();
+  }
+
+  undoBtn.addEventListener("click", () => restoreHistory(undoStack, redoStack));
+  redoBtn.addEventListener("click", () => restoreHistory(redoStack, undoStack));
 
   function previewNote(midi) {
     if (!previewCtx) {
@@ -523,8 +577,12 @@
   // 他の音符には触らない。丸めや書き戻しはドラッグが終わるまで行わない
   function handleNoteDrag(index, kind, value) {
     if (index < 0 || index >= notes.length) return;
+    if (!dragBefore) dragBefore = snapshot();
     if (kind === "resize") {
       notes[index].duration = value;
+    } else if (kind === "pitch") {
+      notes[index].midi = value;
+      notes[index].note = midiToName(value);
     } else {
       notes[index].start = value;
     }
@@ -534,12 +592,13 @@
   // ドラッグ終了: 値を丸めてJSONに書き戻し、長さ変更ボタンの状態も合わせる
   function handleDragEnd(index) {
     if (index < 0 || index >= notes.length) return;
+    if (!dragBefore) return; // 選択クリックだけなら編集履歴を作らない
+    const before = dragBefore;
+    dragBefore = null;
     const note = notes[index];
-    note.start = round3(note.start);
-    note.duration = round3(note.duration);
-    writeBackJson();
-    updateDurationButtons();
-    renderPianoRoll();
+    // 変更していない軸は丸めず、そのまま維持する。
+    commitNoteEdit(note);
+    recordEdit(before);
   }
 
   function updateSelectionUI() {
@@ -549,6 +608,7 @@
     const hasSelection = selectedIndex >= 0 && selectedIndex < notes.length;
     upBtn.disabled = !hasSelection;
     downBtn.disabled = !hasSelection;
+    deleteNoteBtn.disabled = !hasSelection;
     if (hasSelection) {
       const n = notes[selectedIndex];
       selectionInfoEl.textContent =
@@ -560,58 +620,15 @@
     renderPianoRoll();
   }
 
-  // 長さ変更(shiftDuration)が今できるかどうかを判定する。
-  // direction: +1=長くする(次の音符のstartを後ろへずらし、その分durationを減らす)
-  //           -1=短くする(次の音符のstartを前へずらし、その分durationを増やす)
-  // どちらも次の音符の終了位置(start+duration)は変わらない
-  function checkDurationShift(direction) {
-    if (selectedIndex < 0 || selectedIndex >= notes.length) {
-      return { ok: false, reason: "" };
-    }
-    if (selectedIndex >= notes.length - 1) {
-      return { ok: false, reason: "最後の音符は長さ変更の対象外です" };
-    }
-    const step = sixteenthDuration();
-    if (!step) {
-      return { ok: false, reason: "BPMを入れると使えます" };
-    }
-    const cur = notes[selectedIndex];
-    const next = notes[selectedIndex + 1];
-    const delta = direction * step;
-    const newCurDuration = cur.duration + delta;
-    const newNextDuration = next.duration - delta;
-    const minDuration = step - 1e-9; // 浮動小数の誤差を吸収する分だけ緩める
-
-    if (newCurDuration < minDuration) {
-      return { ok: false, reason: "これ以上短くできません" };
-    }
-    if (newNextDuration < minDuration) {
-      return { ok: false, reason: "次の音符が短すぎて吸収しきれません" };
-    }
-    return { ok: true, reason: "" };
-  }
-
   function updateDurationButtons() {
-    const shorten = checkDurationShift(-1);
-    const lengthen = checkDurationShift(1);
-    shortenBtn.disabled = !shorten.ok;
-    lengthenBtn.disabled = !lengthen.ok;
-
-    if (selectedIndex < 0) {
-      durationHintEl.textContent = "";
-      return;
-    }
-    const reasons = [];
-    if (!shorten.ok && shorten.reason) reasons.push("◀ " + shorten.reason);
-    if (!lengthen.ok && lengthen.reason) reasons.push("▶ " + lengthen.reason);
-    // 短くする/長くするが同じ理由でどちらも無効なときは、まとめて1つだけ出す
-    if (reasons.length === 2 && shorten.reason === lengthen.reason) {
-      durationHintEl.textContent = shorten.reason;
-    } else if (reasons.length > 0) {
-      durationHintEl.textContent = reasons.join(" ／ ");
-    } else {
-      durationHintEl.textContent = "←→キーでも16分音符単位の長さ変更ができます";
-    }
+    const n = notes[selectedIndex];
+    leftBtn.disabled = !n || n.start <= 0;
+    rightBtn.disabled = !n;
+    shortenBtn.disabled = !n || n.duration <= sixteenthDuration();
+    lengthenBtn.disabled = !n;
+    durationHintEl.textContent = n
+      ? "1ステップ: " + sixteenthDuration().toFixed(3) + "秒 ／ ←→は位置、−＋は長さ"
+      : "";
   }
 
   function selectNote(index) {
@@ -628,6 +645,7 @@
       parsed = parseNotes(jsonInputEl.value);
     } catch (e) {
       errorMsgEl.textContent = e.message;
+      addNoteBtn.disabled = true;
       notes = [];
       selectedIndex = -1;
       noteChipsEl.innerHTML = "";
@@ -635,8 +653,9 @@
       return false;
     }
     errorMsgEl.textContent = "";
+    addNoteBtn.disabled = false;
     notes = parsed.slice().sort((a, b) => a.start - b.start);
-    pianoRollRange = computePianoRollRange(notes); // 元のメロディの音域で固定する
+    pianoRollRange = notes.length ? computePianoRollRange(notes) : { min: 48, max: 72 };
     if (selectedIndex >= notes.length) selectedIndex = -1;
     renderChips();
     return true;
@@ -819,15 +838,19 @@
       if (!opts.onNoteDrag) return;
 
       const startClientX = e.clientX;
+      const startClientY = e.clientY;
+      const origMidi = note.midi;
       const origStart = note.start;
       const origDuration = note.duration;
 
       function onMouseMove(moveEvent) {
         const deltaSec = (moveEvent.clientX - startClientX) / pxPerSec;
         if (kind === "resize") {
-          opts.onNoteDrag(index, "resize", Math.max(0.02, origDuration + deltaSec));
+          opts.onNoteDrag(index, "resize", Math.max(sixteenthDuration(), origDuration + deltaSec));
         } else {
-          opts.onNoteDrag(index, "move", Math.max(0, origStart + deltaSec)); // startは負にしない
+          opts.onNoteDrag(index, "move", Math.max(0, origStart + deltaSec));
+          const midi = Math.max(0, Math.min(127, origMidi - Math.round((moveEvent.clientY - startClientY) / PIANO_ROLL_ROW_HEIGHT)));
+          if (midi !== notes[index].midi) opts.onNoteDrag(index, "pitch", midi);
         }
       }
 
@@ -849,13 +872,12 @@
     const newMidi = note.midi + semitones;
     if (newMidi < 0 || newMidi > 127) return; // MIDIの範囲外には行かない
 
+    const before = snapshot();
     note.midi = newMidi;
     note.note = midiToName(newMidi);
 
-    const chip = noteChipsEl.querySelectorAll(".note-chip")[selectedIndex];
-    if (chip) chip.textContent = note.note;
-    updateSelectionUI();
-    writeBackJson();
+    commitNoteEdit(note);
+    recordEdit(before);
     previewNote(newMidi);
   }
 
@@ -863,32 +885,26 @@
     return Math.round(x * 1000) / 1000;
   }
 
-  // 16分音符1つぶんの秒数。BPM未指定ならnull(長さ変更は無効)
+  // 既存の16分音符単位を再利用。BPM未指定時は0.125秒。
   function sixteenthDuration() {
     const bpm = currentHummingBpm();
-    return bpm ? (60 / bpm) / 4 : null;
+    return bpm ? (60 / bpm) / 4 : 0.125;
   }
 
-  // 選択中の音符の長さを16分音符単位で変える。
-  // 長くした分だけ次の音符のstartを後ろへ、短くした分だけ次の音符のstartを前へずらし、
-  // その分だけ次の音符のdurationを反対に増減させる。
-  // これにより次の音符の終了位置(start+duration)は変わらず、重なりも起きない
-  function shiftDuration(direction) {
-    const check = checkDurationShift(direction);
-    if (!check.ok) return;
-
+  function shiftTime(field, direction) {
+    const n = notes[selectedIndex];
+    if (!n) return;
     const step = sixteenthDuration();
-    const cur = notes[selectedIndex];
-    const next = notes[selectedIndex + 1];
-    const delta = direction * step;
+    const min = field === "start" ? 0 : step;
+    if (direction < 0 && n[field] <= min) return;
+    const before = snapshot();
+    n[field] = Math.max(min, n[field] + direction * step);
+    commitNoteEdit(n);
+    recordEdit(before);
+  }
 
-    cur.duration = round3(cur.duration + delta);
-    next.start = round3(next.start + delta);
-    next.duration = round3(next.duration - delta);
-
-    writeBackJson();
-    updateDurationButtons();
-    renderPianoRoll();
+  function shiftDuration(direction) {
+    shiftTime("duration", direction);
   }
 
   // 直した結果をテキストエリアのJSONに書き戻す
@@ -900,8 +916,45 @@
     writingBack = false;
   }
 
+  // notesを正本に、順序・選択・表示・JSONをまとめて更新する。
+  function commitNoteEdit(selectedNote = null) {
+    stopPlayback();
+    notes.sort((a, b) => a.start - b.start);
+    selectedIndex = selectedNote ? notes.indexOf(selectedNote) : -1;
+    pianoRollRange = notes.length ? computePianoRollRange(notes) : { min: 48, max: 72 };
+    writeBackJson();
+    renderChips(); // 選択UIとピアノロールも更新
+  }
+
+  function addNote() {
+    if (addNoteBtn.disabled) return; // 不正なJSONを上書きしない
+    const source = notes[selectedIndex] || notes[notes.length - 1];
+    const midi = source ? source.midi : 60;
+    const note = {
+      note: midiToName(midi), midi,
+      start: source ? source.start + source.duration : 0,
+      duration: source ? source.duration : 0.5,
+    };
+    const before = snapshot();
+    notes.push(note);
+    commitNoteEdit(note);
+    recordEdit(before);
+  }
+
+  function deleteNote() {
+    if (selectedIndex < 0 || selectedIndex >= notes.length) return;
+    const before = snapshot();
+    notes.splice(selectedIndex, 1);
+    commitNoteEdit();
+    recordEdit(before);
+  }
+
+  addNoteBtn.addEventListener("click", addNote);
+  deleteNoteBtn.addEventListener("click", deleteNote);
   upBtn.addEventListener("click", () => shiftSelected(1));
   downBtn.addEventListener("click", () => shiftSelected(-1));
+  leftBtn.addEventListener("click", () => shiftTime("start", -1));
+  rightBtn.addEventListener("click", () => shiftTime("start", 1));
   shortenBtn.addEventListener("click", () => shiftDuration(-1));
   lengthenBtn.addEventListener("click", () => shiftDuration(1));
 
@@ -909,16 +962,27 @@
     updateSelectionUI(); // ヒント文の更新も兼ねて呼ぶ(中でrenderPianoRollも走る)
   });
 
-  // 上下矢印キー = 音の高さ、左右矢印キー = 音の長さ
+  // 上下矢印キー = 音の高さ、左右矢印キー = 音符全体の位置
   document.addEventListener("keydown", (e) => {
-    if (e.target === jsonInputEl) return;          // JSONを編集中は普通の矢印キー
-    if (selectedIndex < 0) return;
-    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+    if (e.target.closest("input, textarea, select, [contenteditable]")) return;
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+      e.preventDefault();
+      if (!e.repeat) {
+        if (e.shiftKey) restoreHistory(redoStack, undoStack);
+        else restoreHistory(undoStack, redoStack);
+      }
+      return;
+    }
+    if (dragBefore || selectedIndex < 0 || e.repeat) return; // 長押しで履歴を大量に積まない
+    if (e.key === "Delete" || e.key === "Backspace") {
+      e.preventDefault();
+      deleteNote();
+    } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
       e.preventDefault();                          // ページのスクロールを止める
       shiftSelected(e.key === "ArrowUp" ? 1 : -1);
     } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
       e.preventDefault();
-      shiftDuration(e.key === "ArrowRight" ? 1 : -1);
+      shiftTime("start", e.key === "ArrowRight" ? 1 : -1);
     }
   });
 
@@ -931,6 +995,11 @@
   // ユーザーがJSONを直接書き換えたら、チップも作り直す
   jsonInputEl.addEventListener("input", () => {
     if (writingBack) return;
+    stopPlayback();
+    dragBefore = null;
+    undoStack.length = 0;
+    redoStack.length = 0;
+    updateHistoryButtons();
     selectedIndex = -1;
     reloadNotes();
   });
@@ -1026,6 +1095,7 @@
     if (!reloadNotes()) return;
 
     stopPlayback(); // 念のため前の再生を止めてからやり直す
+    if (!notes.length) return;
 
     const chipEls = noteChipsEl.querySelectorAll(".note-chip");
 
@@ -1047,8 +1117,7 @@
       }, startDelayMs));
     });
 
-    const lastNote = notes[notes.length - 1];
-    const totalDurationSec = lastNote.start + lastNote.duration;
+    const totalDurationSec = Math.max(...notes.map((note) => note.start + note.duration));
     const totalMs = totalDurationSec * 1000;
     timers.push(setTimeout(() => {
       resetToStopped();
