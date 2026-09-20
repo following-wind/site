@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Following Wind · Pixel Code Whiteboard</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">↗</span><div><strong>Following Wind</strong><span>PIXEL CODE WHITEBOARD <b>V1</b></span></div></div>
+    <div class="tools"><button id="undo" title="Undo (Ctrl/⌘ Z)" disabled>↶ Undo</button><button id="redo" title="Redo (Ctrl/⌘ Shift Z)" disabled>↷ Redo</button></div>
+    <div class="drop-hint">PNGをドロップ、または Aseprite / Pixelmash / Excel から貼り付け</div>
+  </header>
+  <main>
+    <p class="site-link"><a href="../">← Following Windへ戻る</a></p>
+    <section class="intro"><div><h1>Pixel Code Whiteboard</h1><p>32 × 32 / 64 × 64 のピクセル素材を、RGBAを変えずにCanvas 2D用JavaScriptへ変換します。</p></div><button id="paste-button" class="primary">PASTE SPRITE</button></section>
+    <section class="board-shell" aria-label="Pixel Code Whiteboard">
+      <div class="board-toolbar"><strong>Whiteboard</strong><span id="board-count">0 sprites</span><span>クリックで選択 · ドラッグで移動 · 右下で拡大縮小</span></div>
+      <div id="board" tabindex="0" aria-label="PNGをドロップ、または画像・Excel表を貼り付けるボード"><div id="empty-board">ここへ PNG をドロップ<br>またはボードをクリックして貼り付け</div></div>
+    </section>
+    <section id="inspector" class="inspector" hidden>
+      <div class="inspector-head"><div><span class="eyebrow">SELECTED SPRITE</span><h2 id="selected-title">SPRITE_001</h2></div><div class="actions"><button id="duplicate">複製</button><button id="delete" class="danger">削除</button></div></div>
+      <div class="details">
+        <label>Name <input id="sprite-name" maxlength="80" autocomplete="off"><small id="variable-name"></small></label>
+        <dl><div><dt>Size</dt><dd id="size"></dd></div><div><dt>Colors</dt><dd id="colors"></dd></div><div><dt>Painted Pixels</dt><dd id="painted"></dd></div><div><dt>Transparent Pixels</dt><dd id="transparent"></dd></div><div><dt>Match</dt><dd id="match" class="match"></dd></div><div><dt>Compact Code</dt><dd id="compact-size"></dd></div><div><dt>Exact Code</dt><dd id="exact-size"></dd></div></dl>
+      </div>
+      <div class="previews"><figure><figcaption>Original</figcaption><canvas id="original-preview" width="32" height="32"></canvas></figure><figure><figcaption>Generated</figcaption><canvas id="generated-preview" width="32" height="32"></canvas></figure></div>
+      <section class="code-panel"><div class="code-title"><div><strong id="code-heading">Canvas JavaScript · Compact</strong><span>選択中のSpriteだけを出力</span></div><div class="code-actions"><button data-code-format="compact" class="active">Compact</button><button data-code-format="exact">Exact</button><button id="copy-code" class="primary">COPY CODE</button></div></div><pre id="code" tabindex="0"></pre></section>
+    </section>
+    <p id="instruction" class="instruction">画像は <code>image/png</code> / <code>image/*</code>、ExcelはコピーされたHTML表のセル背景色を読み取ります。対応サイズは 32 × 32 / 64 × 64 です。</p>
+  </main>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
