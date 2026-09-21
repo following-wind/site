@@ -52,6 +52,18 @@
   }
   .part-controls select { min-width: 140px; padding: 4px; }
   .part-controls input[type="range"] { width: 140px; }
+  .midi-export {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 12px;
+    border: 1px solid #8884;
+    border-radius: 8px;
+    margin-bottom: 16px;
+  }
+  .midi-export strong { margin-right: 4px; }
+  .midi-export button { padding: 6px 10px; cursor: pointer; }
   #playBtn {
     font-size: 1.1em;
     padding: 8px 20px;
@@ -165,6 +177,13 @@
   <label>Drum Volume <input id="drumVolume" type="range" min="0" max="100" value="45"></label>
 </div>
 
+<div class="midi-export">
+  <strong>MIDI Export</strong>
+  <button id="exportChordMidi">Chord MIDI</button>
+  <button id="exportBassMidi">Bass MIDI</button>
+  <button id="exportDrumsMidi">Drums MIDI</button>
+</div>
+
 <div id="progression"></div>
 
 <h2>現在の設定（JSON）</h2>
@@ -172,21 +191,14 @@
 <pre id="jsonOut"></pre>
 
 <script src="patterns.js"></script>
+<script src="midi.js"></script>
 <script>
 (function () {
   "use strict";
 
   // ---- コードの定義 ----------------------------------------------------
-  const { ROOTS, BASS_PATTERNS, DRUM_PATTERNS, bassEvents, totalBars } = window.ChordRhythm;
-
-  // 半音数(インターバル)。C=0を根音として数える。
-  const CHORD_TYPES = {
-    "maj":  { label: "maj（3音・明るい）",             intervals: [0, 4, 7] },
-    "m":    { label: "m（3音・暗い）",                 intervals: [0, 3, 7] },
-    "maj7": { label: "maj7（4音・明るく柔らかい）",     intervals: [0, 4, 7, 11] },
-    "m7":   { label: "m7（4音・暗く柔らかい）",         intervals: [0, 3, 7, 10] },
-    "7":    { label: "7（4音・次へ進みたい）",          intervals: [0, 4, 7, 10] },
-  };
+  const { ROOTS, CHORD_TYPES, BASS_PATTERNS, DRUM_PATTERNS, bassEvents, totalBars } = window.ChordRhythm;
+  const MIDI = window.ChordMidi;
 
   const MIN_SLOTS = 2;
   const MAX_SLOTS = 8;
@@ -499,6 +511,9 @@
   const bassVolumeEl = document.getElementById("bassVolume");
   const drumPatternEl = document.getElementById("drumPattern");
   const drumVolumeEl = document.getElementById("drumVolume");
+  const exportChordMidiBtn = document.getElementById("exportChordMidi");
+  const exportBassMidiBtn = document.getElementById("exportBassMidi");
+  const exportDrumsMidiBtn = document.getElementById("exportDrumsMidi");
   const playBtn = document.getElementById("playBtn");
   const minusBtn = document.getElementById("minusBtn");
   const plusBtn = document.getElementById("plusBtn");
@@ -606,6 +621,26 @@
     drumVolume = Number(drumVolumeEl.value) / 100;
     if (drumBus) drumBus.gain.setValueAtTime(drumVolume, getAudioCtx().currentTime);
     updateJsonOut();
+  });
+
+  function exportConfig() {
+    return {
+      bpm,
+      repeatCount,
+      progression: progression.map((chord) => ({ root: chord.root, type: chord.type })),
+      bassPattern,
+      drumPattern,
+    };
+  }
+
+  exportChordMidiBtn.addEventListener("click", () => {
+    MIDI.downloadMidi(MIDI.createChordMidi(exportConfig()), "chord.mid");
+  });
+  exportBassMidiBtn.addEventListener("click", () => {
+    MIDI.downloadMidi(MIDI.createBassMidi(exportConfig()), "bass.mid");
+  });
+  exportDrumsMidiBtn.addEventListener("click", () => {
+    MIDI.downloadMidi(MIDI.createDrumsMidi(exportConfig()), "drums.mid");
   });
 
   plusBtn.addEventListener("click", () => {

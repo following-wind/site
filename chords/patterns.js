@@ -7,6 +7,14 @@
   "use strict";
 
   const ROOTS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+  // 再生とMIDI書き出しで共用するコード構成音。
+  const CHORD_TYPES = {
+    "maj":  { label: "maj（3音・明るい）",             intervals: [0, 4, 7] },
+    "m":    { label: "m（3音・暗い）",                 intervals: [0, 3, 7] },
+    "maj7": { label: "maj7（4音・明るく柔らかい）",     intervals: [0, 4, 7, 11] },
+    "m7":   { label: "m7（4音・暗く柔らかい）",         intervals: [0, 3, 7, 10] },
+    "7":    { label: "7（4音・次へ進みたい）",          intervals: [0, 4, 7, 10] },
+  };
   const BASS_PATTERNS = {
     off: { label: "OFF" },
     rootHold: { label: "Root Hold" },
@@ -56,5 +64,5 @@
     return Math.max(0, chordCount) * Math.max(0, repeatCount);
   }
 
-  return { ROOTS, BASS_PATTERNS, DRUM_PATTERNS, bassEvents, rootSemitone, totalBars };
+  return { ROOTS, CHORD_TYPES, BASS_PATTERNS, DRUM_PATTERNS, bassEvents, rootSemitone, totalBars };
 });
