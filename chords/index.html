@@ -34,6 +34,24 @@
   .transport label {
     font-size: 0.9em;
   }
+  .part-controls {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(220px, 1fr));
+    gap: 10px 18px;
+    padding: 12px;
+    border: 1px solid #8884;
+    border-radius: 8px;
+    margin-bottom: 16px;
+  }
+  .part-controls label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 0.9em;
+  }
+  .part-controls select { min-width: 140px; padding: 4px; }
+  .part-controls input[type="range"] { width: 140px; }
   #playBtn {
     font-size: 1.1em;
     padding: 8px 20px;
@@ -104,6 +122,9 @@
   footer a:focus-visible {
     text-decoration: underline;
   }
+  @media (max-width: 620px) {
+    .part-controls { grid-template-columns: 1fr; }
+  }
 </style>
 </head>
 <body>
@@ -120,6 +141,15 @@
     BPM: <span id="bpmValue">75</span>
     <input type="range" id="bpmSlider" min="60" max="100" value="75">
   </label>
+  <label>
+    Repeat:
+    <select id="repeatSelect">
+      <option value="1">1</option>
+      <option value="2">2</option>
+      <option value="4" selected>4</option>
+      <option value="8">8</option>
+    </select>
+  </label>
   <div class="slot-count-controls">
     <span>コード数:</span>
     <button id="minusBtn">−</button>
@@ -128,18 +158,26 @@
   </div>
 </div>
 
+<div class="part-controls">
+  <label>Bass Pattern <select id="bassPattern"></select></label>
+  <label>Bass Volume <input id="bassVolume" type="range" min="0" max="100" value="55"></label>
+  <label>Drum Pattern <select id="drumPattern"></select></label>
+  <label>Drum Volume <input id="drumVolume" type="range" min="0" max="100" value="45"></label>
+</div>
+
 <div id="progression"></div>
 
 <h2>現在の設定（JSON）</h2>
 <p class="hint">Python側に貼れる形で表示しています。</p>
 <pre id="jsonOut"></pre>
 
+<script src="patterns.js"></script>
 <script>
 (function () {
   "use strict";
 
   // ---- コードの定義 ----------------------------------------------------
-  const ROOTS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+  const { ROOTS, BASS_PATTERNS, DRUM_PATTERNS, bassEvents, totalBars } = window.ChordRhythm;
 
   // 半音数(インターバル)。C=0を根音として数える。
   const CHORD_TYPES = {
@@ -153,6 +191,13 @@
   const MIN_SLOTS = 2;
   const MAX_SLOTS = 8;
   const BASE_MIDI = 48; // C3 を根音の基準にする
+  const BASS_BASE_MIDI = 36; // C2
+  const CHORD_NOTE_GAIN = 0.10;
+  const BASS_NOTE_GAIN = 0.24;
+  const KICK_GAIN = 0.62;
+  const SNARE_GAIN = 0.40;
+  const HAT_GAIN = 0.17;
+  const OUTPUT_GAIN = 0.90;
 
   // ---- 状態 --------------------------------------------------------
   // 初期値: Bbm7 -> Cm7 -> Fm7 -> Dbmaj7 (過去に良かった進行)
@@ -164,10 +209,55 @@
     { root: "C#", type: "maj7" },
   ];
   let bpm = 75;
+  let repeatCount = 4;
+  let bassPattern = "rootHold";
+  let drumPattern = "basic";
+  let bassVolume = 0.55;
+  let drumVolume = 0.45;
   let isPlaying = false;
 
   // ---- Web Audio ----------------------------------------------------
   let audioCtx = null;
+  let bassBus = null;
+  let bassFilter = null;
+  let drumBus = null;
+  let masterCompressor = null;
+  let masterGain = null;
+  let noiseBuffer = null;
+  const activeSources = new Set();
+
+  function trackSource(source) {
+    activeSources.add(source);
+    source.addEventListener("ended", () => activeSources.delete(source), { once: true });
+    return source;
+  }
+
+  function ensurePartBuses(ctx) {
+    if (bassBus) return;
+    // 全パートを同じ安全装置へ通し、最大音量時の瞬間的なクリッピングを防ぐ。
+    masterCompressor = ctx.createDynamicsCompressor();
+    masterCompressor.threshold.value = -3;
+    masterCompressor.knee.value = 0;
+    masterCompressor.ratio.value = 20;
+    masterCompressor.attack.value = 0;
+    masterCompressor.release.value = 0.15;
+    masterGain = ctx.createGain();
+    masterGain.gain.value = OUTPUT_GAIN;
+    masterCompressor.connect(masterGain).connect(ctx.destination);
+
+    bassBus = ctx.createGain();
+    bassBus.gain.value = bassVolume;
+    bassFilter = ctx.createBiquadFilter();
+    bassFilter.type = "lowpass";
+    bassFilter.frequency.value = 520;
+    bassFilter.Q.value = 0.7;
+    bassFilter.connect(bassBus).connect(masterCompressor);
+
+    drumBus = ctx.createGain();
+    drumBus.gain.value = drumVolume;
+    drumBus.connect(masterCompressor);
+  }
+
   function getAudioCtx() {
     if (!audioCtx) {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -175,6 +265,7 @@
     if (audioCtx.state === "suspended") {
       audioCtx.resume();
     }
+    ensurePartBuses(audioCtx);
     return audioCtx;
   }
 
@@ -184,7 +275,7 @@
 
   // 単音: フェードイン/フェードアウト付きで鳴らす
   function playNote(ctx, freq, startTime, duration, peakGain) {
-    const osc = ctx.createOscillator();
+    const osc = trackSource(ctx.createOscillator());
     osc.type = "triangle";
     osc.frequency.value = freq;
 
@@ -195,9 +286,102 @@
     gain.gain.setValueAtTime(peakGain, startTime + duration - fade);
     gain.gain.linearRampToValueAtTime(0, startTime + duration);
 
-    osc.connect(gain).connect(ctx.destination);
+    osc.connect(gain).connect(masterCompressor);
     osc.start(startTime);
     osc.stop(startTime + duration + 0.02);
+  }
+
+  function playBassNote(ctx, midi, startTime, duration) {
+    const osc = trackSource(ctx.createOscillator());
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(midiToFreq(midi), startTime);
+
+    const gain = ctx.createGain();
+    const attack = Math.min(0.025, duration / 5);
+    const release = Math.min(0.08, duration / 3);
+    gain.gain.setValueAtTime(0.0001, startTime);
+    gain.gain.exponentialRampToValueAtTime(BASS_NOTE_GAIN, startTime + attack);
+    gain.gain.setValueAtTime(BASS_NOTE_GAIN, Math.max(startTime + attack, startTime + duration - release));
+    gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+    osc.connect(gain).connect(bassFilter);
+    osc.start(startTime);
+    osc.stop(startTime + duration + 0.02);
+  }
+
+  function scheduleBass(chord, nextChord, startTime, beatDuration) {
+    const ctx = getAudioCtx();
+    bassEvents(bassPattern, chord, nextChord).forEach((event) => {
+      playBassNote(
+        ctx,
+        BASS_BASE_MIDI + event.semitone,
+        startTime + event.beat * beatDuration,
+        event.durationBeats * beatDuration
+      );
+    });
+  }
+
+  function getNoiseBuffer(ctx) {
+    if (noiseBuffer) return noiseBuffer;
+    noiseBuffer = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * 0.22), ctx.sampleRate);
+    const channel = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < channel.length; i += 1) channel[i] = Math.random() * 2 - 1;
+    return noiseBuffer;
+  }
+
+  function playKick(ctx, startTime, velocity) {
+    const osc = trackSource(ctx.createOscillator());
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(125, startTime);
+    osc.frequency.exponentialRampToValueAtTime(42, startTime + 0.18);
+    gain.gain.setValueAtTime(KICK_GAIN * velocity, startTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.22);
+    osc.connect(gain).connect(drumBus);
+    osc.start(startTime);
+    osc.stop(startTime + 0.23);
+  }
+
+  function playSnare(ctx, startTime, velocity) {
+    const source = trackSource(ctx.createBufferSource());
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+    source.buffer = getNoiseBuffer(ctx);
+    filter.type = "bandpass";
+    filter.frequency.value = 1800;
+    filter.Q.value = 0.7;
+    gain.gain.setValueAtTime(SNARE_GAIN * velocity, startTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.14);
+    source.connect(filter).connect(gain).connect(drumBus);
+    source.start(startTime);
+    source.stop(startTime + 0.15);
+  }
+
+  function playHat(ctx, startTime, velocity) {
+    const source = trackSource(ctx.createBufferSource());
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+    source.buffer = getNoiseBuffer(ctx);
+    filter.type = "highpass";
+    filter.frequency.value = 6500;
+    gain.gain.setValueAtTime(HAT_GAIN * velocity, startTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.045);
+    source.connect(filter).connect(gain).connect(drumBus);
+    source.start(startTime);
+    source.stop(startTime + 0.05);
+  }
+
+  function scheduleDrums(startTime, beatDuration) {
+    const pattern = DRUM_PATTERNS[drumPattern];
+    if (!pattern || drumPattern === "off") return;
+    const ctx = getAudioCtx();
+    const eighth = beatDuration / 2;
+    for (let step = 0; step < 8; step += 1) {
+      const swingDelay = step % 2 ? eighth * pattern.swing : 0;
+      const atTime = startTime + step * eighth + swingDelay;
+      if (pattern.kick[step]) playKick(ctx, atTime, pattern.velocity.kick);
+      if (pattern.snare[step]) playSnare(ctx, atTime, pattern.velocity.snare);
+      if (pattern.hat[step]) playHat(ctx, atTime, pattern.velocity.hat);
+    }
   }
 
   // 和音: root(0-11) と type から音を組み立てて鳴らす
@@ -207,7 +391,7 @@
     const intervals = CHORD_TYPES[chord.type].intervals;
     intervals.forEach((iv) => {
       const freq = midiToFreq(BASE_MIDI + rootIndex + iv);
-      playNote(ctx, freq, startTime, duration, 0.1);
+      playNote(ctx, freq, startTime, duration, CHORD_NOTE_GAIN);
     });
   }
 
@@ -224,19 +408,34 @@
   }
 
   let schedulerTimer = null;
+  let finishTimer = null;
   let nextNoteTime = 0;
-  let currentStep = 0;
+  let scheduledBars = 0;
+  const highlightTimers = new Set();
   const scheduleAheadTime = 0.15; // 秒
   const lookaheadMs = 25;
 
   function scheduler() {
+    if (!isPlaying) return;
     const ctx = getAudioCtx();
-    while (nextNoteTime < ctx.currentTime + scheduleAheadTime) {
-      const chord = progression[currentStep];
-      playChord(chord, nextNoteTime, barDuration());
-      highlightStep(currentStep, nextNoteTime);
-      currentStep = (currentStep + 1) % progression.length;
-      nextNoteTime += barDuration();
+    const targetBars = totalBars(progression.length, repeatCount);
+    while (scheduledBars < targetBars && nextNoteTime < ctx.currentTime + scheduleAheadTime) {
+      const step = scheduledBars % progression.length;
+      const chord = progression[step];
+      const nextChord = progression[(step + 1) % progression.length];
+      const beat = 60 / bpm;
+      const bar = barDuration();
+      playChord(chord, nextNoteTime, bar);
+      scheduleBass(chord, nextChord, nextNoteTime, beat);
+      scheduleDrums(nextNoteTime, beat);
+      highlightStep(step, nextNoteTime);
+      scheduledBars += 1;
+      nextNoteTime += bar;
+    }
+    if (scheduledBars >= targetBars) {
+      const delayMs = Math.max(0, (nextNoteTime - ctx.currentTime) * 1000 + 30);
+      finishTimer = setTimeout(finishPlayback, delayMs);
+      return;
     }
     schedulerTimer = setTimeout(scheduler, lookaheadMs);
   }
@@ -244,28 +443,50 @@
   function highlightStep(step, atTime) {
     const ctx = getAudioCtx();
     const delayMs = Math.max(0, (atTime - ctx.currentTime) * 1000);
-    setTimeout(() => {
+    const timer = setTimeout(() => {
+      highlightTimers.delete(timer);
       document.querySelectorAll(".chord-slot").forEach((el, i) => {
         el.classList.toggle("playing", isPlaying && i === step);
       });
     }, delayMs);
+    highlightTimers.add(timer);
   }
 
   function startPlayback() {
+    if (isPlaying) return;
     const ctx = getAudioCtx();
     isPlaying = true;
-    currentStep = 0;
+    scheduledBars = 0;
     nextNoteTime = ctx.currentTime + 0.05;
     scheduler();
     playBtn.textContent = "■ 停止";
   }
 
+  function clearPlaybackUi() {
+    document.querySelectorAll(".chord-slot").forEach((el) => el.classList.remove("playing"));
+    playBtn.textContent = "▶ 再生";
+  }
+
+  function finishPlayback() {
+    isPlaying = false;
+    schedulerTimer = null;
+    finishTimer = null;
+    clearPlaybackUi();
+  }
+
   function stopPlayback() {
     isPlaying = false;
     clearTimeout(schedulerTimer);
+    clearTimeout(finishTimer);
     schedulerTimer = null;
-    document.querySelectorAll(".chord-slot").forEach((el) => el.classList.remove("playing"));
-    playBtn.textContent = "▶ 再生";
+    finishTimer = null;
+    highlightTimers.forEach((timer) => clearTimeout(timer));
+    highlightTimers.clear();
+    activeSources.forEach((source) => {
+      try { source.stop(); } catch (_) { /* すでに停止済み */ }
+    });
+    activeSources.clear();
+    clearPlaybackUi();
   }
 
   // ---- UI 構築 --------------------------------------------------------
@@ -273,6 +494,11 @@
   const jsonOutEl = document.getElementById("jsonOut");
   const bpmSlider = document.getElementById("bpmSlider");
   const bpmValueEl = document.getElementById("bpmValue");
+  const repeatSelect = document.getElementById("repeatSelect");
+  const bassPatternEl = document.getElementById("bassPattern");
+  const bassVolumeEl = document.getElementById("bassVolume");
+  const drumPatternEl = document.getElementById("drumPattern");
+  const drumVolumeEl = document.getElementById("drumVolume");
   const playBtn = document.getElementById("playBtn");
   const minusBtn = document.getElementById("minusBtn");
   const plusBtn = document.getElementById("plusBtn");
@@ -341,6 +567,9 @@
     const data = {
       chords: progression.map((c) => ({ root: c.root, type: c.type })),
       bpm: bpm,
+      repeat: repeatCount,
+      bass: { pattern: bassPattern, volume: bassVolume },
+      drums: { pattern: drumPattern, volume: drumVolume },
     };
     jsonOutEl.textContent = JSON.stringify(data, null, 2);
   }
@@ -349,6 +578,33 @@
   bpmSlider.addEventListener("input", () => {
     bpm = Number(bpmSlider.value);
     bpmValueEl.textContent = String(bpm);
+    updateJsonOut();
+  });
+
+  repeatSelect.addEventListener("change", () => {
+    repeatCount = Number(repeatSelect.value);
+    updateJsonOut();
+  });
+
+  bassPatternEl.addEventListener("change", () => {
+    bassPattern = bassPatternEl.value;
+    updateJsonOut();
+  });
+
+  bassVolumeEl.addEventListener("input", () => {
+    bassVolume = Number(bassVolumeEl.value) / 100;
+    if (bassBus) bassBus.gain.setValueAtTime(bassVolume, getAudioCtx().currentTime);
+    updateJsonOut();
+  });
+
+  drumPatternEl.addEventListener("change", () => {
+    drumPattern = drumPatternEl.value;
+    updateJsonOut();
+  });
+
+  drumVolumeEl.addEventListener("input", () => {
+    drumVolume = Number(drumVolumeEl.value) / 100;
+    if (drumBus) drumBus.gain.setValueAtTime(drumVolume, getAudioCtx().currentTime);
     updateJsonOut();
   });
 
@@ -373,6 +629,8 @@
   });
 
   // ---- 初期化 ---------------------------------------------------------
+  bassPatternEl.innerHTML = optionsHtml(Object.keys(BASS_PATTERNS), bassPattern, (key) => BASS_PATTERNS[key].label);
+  drumPatternEl.innerHTML = optionsHtml(Object.keys(DRUM_PATTERNS), drumPattern, (key) => DRUM_PATTERNS[key].label);
   renderProgression();
 })();
 </script>
