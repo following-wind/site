@@ -3,7 +3,7 @@ import {readFile,mkdir} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {chromium} from 'playwright';
 
-const origin='http://127.0.0.1:8768',artifacts=new URL('../artifacts/',import.meta.url);
+const origin=process.env.PIXELIZER_ORIGIN||'https://following-wind.com',artifacts=new URL('../artifacts/',import.meta.url);
 await mkdir(artifacts,{recursive:true});
 const browser=await chromium.launch({headless:true,args:['--no-sandbox']});
 try{
