@@ -137,15 +137,18 @@
     stroke: #8889;
     stroke-width: 1.5;
   }
+  .piano-roll-time-label { font-size: 11px; fill: currentColor; }
   .piano-roll-note {
     fill: #4a90d9;
   }
   .piano-roll-note-clickable {
     cursor: grab;
+    touch-action: none;
   }
   .piano-roll-resize-handle {
     fill: transparent;
     cursor: ew-resize;
+    touch-action: none;
   }
   .piano-roll-note-selected {
     fill: #e08a2e;
@@ -383,8 +386,34 @@
 
 <div class="editor">
   <label for="bpmInput">BPM(任意): <input type="number" id="bpmInput" min="40" max="240" style="width:5em;"></label>
+  <button id="quantizeBtn" type="button" disabled>拍に揃える</button>
+  <span class="hint">4/4拍子。BPM指定後、全音符の開始と長さを16分音符単位へ揃えます（Undoで戻せます）。</span>
   <span class="hint">時間ステップ：BPM指定時は16分音符、未指定時は0.125秒</span>
 </div>
+<section aria-labelledby="recordHeading" class="transport" style="display:block">
+  <h2 id="recordHeading" style="font-size:1em;margin:0">マイクからメロディー</h2>
+  <p class="hint">鼻歌・単旋律ボーカルを最大30秒録音。音声は送信されません。まず「ド・レ・ミ・ファ・ソ」を1音ずつ区切って歌ってください。</p>
+  <div class="editor">
+    <button id="recordBtn" type="button">● 録音開始</button>
+    <button id="recordStopBtn" type="button" disabled>■ 録音停止</button>
+    <button id="convertBtn" type="button" disabled>♪ ピアノロールに変換</button>
+  </div>
+  <p id="recordStatus" role="status" aria-live="polite"></p>
+  <div class="editor">
+    <label for="noteDetail" style="width:100%">音符の細かさ</label>
+    <span style="display:inline-flex;align-items:center;gap:6px;max-width:100%;white-space:nowrap">
+      <span>細かい</span>
+      <input id="noteDetail" type="range" min="0" max="100" value="50" step="1" aria-label="音符の細かさ：細かいからなめらか" style="width:150px;max-width:34vw">
+      <span>なめらか</span>
+    </span>
+    <output id="noteDetailLabel" for="noteDetail">標準</output>
+    <button id="reconvertBtn" type="button" disabled>再変換</button>
+  </div>
+  <p class="hint">中央が標準です。スライダーだけでは音符は変わりません。録音を一度変換した後、再変換で比較できます（Undoで戻せます）。</p>
+  <audio id="originalAudio" controls hidden aria-label="原音を聞く" style="max-width:100%"></audio>
+  <p class="hint">変換すると現在の音符を置き換えます（Undoで戻せます）。原音はこのページを開いている間だけ残ります。</p>
+  <div id="recordError" class="error" role="alert"></div>
+</section>
 <div class="piano-roll-wrap" id="pianoRollWrap"></div>
 
 <div class="editor">
@@ -410,6 +439,18 @@
   <span id="durationHint" class="hint"></span>
 </div>
 
+<div class="editor">
+  <button id="saveJsonBtn" type="button">JSON保存</button>
+  <button id="saveMidiBtn" type="button">MIDI保存</button>
+  <label>JSON読込 <input id="jsonFile" type="file" accept=".json,application/json" style="max-width:100%"></label>
+</div>
+<p class="hint">JSONは従来の音符配列形式です。BPMは含まれないため、別の端末では必要に応じて設定してください。MIDIは上のBPM（未指定なら120）で保存し、音符の秒数と休符を保ちます。</p>
+<div id="fileStatus" role="status" aria-live="polite"></div>
+
+<script src="recorder.js"></script>
+<script src="pitch-detector.js"></script>
+<script src="note-segmenter.js"></script>
+<script src="midi-export.js"></script>
 <script>
 (function () {
   "use strict";
@@ -451,15 +492,16 @@
     try {
       data = JSON.parse(text);
     } catch (e) {
-      throw new Error("JSONの形式が正しくありません: " + e.message);
+      throw new Error("JSONの形式が正しくありません。括弧やカンマを確認してください。");
     }
     if (!Array.isArray(data)) {
       throw new Error("JSONは配列である必要があります([{...}, {...}])");
     }
 
     data.forEach((n, i) => {
-      if (typeof n.midi !== "number" || typeof n.start !== "number" || typeof n.duration !== "number") {
-        throw new Error(`${i + 1}番目の要素に midi/start/duration が数値で揃っていません`);
+      if (!n || !Number.isInteger(n.midi) || n.midi < 0 || n.midi > 127 ||
+          !Number.isFinite(n.start) || n.start < 0 || !Number.isFinite(n.duration) || n.duration <= 0) {
+        throw new Error(`${i + 1}番目の音符を確認してください。midiは0〜127の整数、startは0以上、durationは0より大きい数値が必要です。`);
       }
     });
     return data;
@@ -485,6 +527,8 @@
   const durationHintEl = document.getElementById("durationHint");
   const selectionInfoEl = document.getElementById("selectionInfo");
   const bpmInputEl = document.getElementById("bpmInput");
+  const quantizeBtn = document.getElementById('quantizeBtn');
+  const BEATS_PER_BAR = 4;
   const pianoRollWrapEl = document.getElementById("pianoRollWrap");
 
   let notes = [];          // 今テキストエリアに入っている音符(startの昇順)
@@ -557,10 +601,11 @@
 
   function currentHummingBpm() {
     const v = Number(bpmInputEl.value);
-    return v > 0 ? v : null;
+    return Number.isFinite(v) && v >= 40 && v <= 240 ? v : null;
   }
 
   function renderPianoRoll() {
+    quantizeBtn.disabled = !currentHummingBpm() || !notes.length || addNoteBtn.disabled;
     pianoRollWrapEl.innerHTML = "";
     if (!notes.length) return;
     const svg = buildPianoRoll(notes, pianoRollRange, {
@@ -724,13 +769,14 @@
     const spanSec = lastEnd + PIANO_ROLL_PADDING_SEC;
     const rows = range.max - range.min + 1;
     const width = labelWidth + spanSec * pxPerSec;
-    const height = rows * rowHeight;
+    const headerHeight = bpm ? 36 : 0;
+    const height = rows * rowHeight + headerHeight;
 
     svg.setAttribute("width", width);
     svg.setAttribute("height", height);
     svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
 
-    const yFor = (midi) => (range.max - midi) * rowHeight;
+    const yFor = (midi) => headerHeight + (range.max - midi) * rowHeight;
     const xFor = (t) => labelWidth + t * pxPerSec;
 
     // rowHeightに余裕があれば白鍵(C D E F G A B)全部にラベルを出す。
@@ -763,7 +809,7 @@
 
     // 拍・小節の区切り線(BPM指定時のみ。4/4拍子として扱う)
     if (bpm) {
-      const beatDur = 60 / bpm;
+      const beatDur = sixteenthDuration() * 4;
       const beatCount = Math.floor(spanSec / beatDur) + 1;
       for (let b = 0; b <= beatCount; b++) {
         const t = b * beatDur;
@@ -774,8 +820,23 @@
         line.setAttribute("x2", x);
         line.setAttribute("y1", 0);
         line.setAttribute("y2", height);
-        line.setAttribute("class", b % 4 === 0 ? "piano-roll-bar-line" : "piano-roll-beat-line");
+        line.setAttribute("class", b % BEATS_PER_BAR === 0 ? "piano-roll-bar-line" : "piano-roll-beat-line");
+        line.dataset.time = String(t);
         svg.appendChild(line);
+        const label = document.createElementNS(svgNS, 'text');
+        label.setAttribute('x', x + 4);
+        label.setAttribute('y', 30);
+        label.setAttribute('class', 'piano-roll-time-label piano-roll-beat-label');
+        label.textContent = String(b % BEATS_PER_BAR + 1);
+        svg.appendChild(label);
+        if (b % BEATS_PER_BAR === 0) {
+          const bar = document.createElementNS(svgNS, 'text');
+          bar.setAttribute('x', x + 4);
+          bar.setAttribute('y', 13);
+          bar.setAttribute('class', 'piano-roll-time-label piano-roll-bar-label');
+          bar.textContent = `${Math.floor(b / BEATS_PER_BAR) + 1}小節`;
+          svg.appendChild(bar);
+        }
       }
     }
 
@@ -902,6 +963,18 @@
     commitNoteEdit(n);
     recordEdit(before);
   }
+
+  quantizeBtn.addEventListener('click', () => {
+    if (!currentHummingBpm() || !notes.length || addNoteBtn.disabled || dragBefore) return;
+    const before = snapshot(), selected = notes[selectedIndex] || null;
+    const step = sixteenthDuration();
+    for (const note of notes) {
+      note.start = Math.max(0, Math.round(note.start / step)) * step;
+      note.duration = Math.max(1, Math.round(note.duration / step)) * step;
+    }
+    commitNoteEdit(selected);
+    recordEdit(before);
+  });
 
   function shiftDuration(direction) {
     shiftTime("duration", direction);
@@ -1126,6 +1199,136 @@
     startPlayheadAnimation(baseTime, totalDurationSec);
   }
 
+  function replaceNotes(incoming) {
+    const before = snapshot();
+    notes = incoming;
+    errorMsgEl.textContent = "";
+    addNoteBtn.disabled = false;
+    commitNoteEdit();
+    recordEdit(before);
+  }
+
+  // Forward touch/pen gestures to the existing mouse drag implementation.
+  // document listeners survive the SVG replacement performed on each move.
+  let touchPointer = null;
+  pianoRollWrapEl.addEventListener('pointerdown', event => {
+    if (event.pointerType === 'mouse' || !event.isPrimary || touchPointer !== null) return;
+    const target = event.target.closest('.piano-roll-note, .piano-roll-resize-handle');
+    if (!target) return;
+    event.preventDefault(); touchPointer = event.pointerId;
+    target.dispatchEvent(new MouseEvent('mousedown', {
+      bubbles:true, button:0, clientX:event.clientX, clientY:event.clientY
+    }));
+  });
+  document.addEventListener('pointermove', event => {
+    if (event.pointerId !== touchPointer) return;
+    event.preventDefault();
+    document.dispatchEvent(new MouseEvent('mousemove', {clientX:event.clientX,clientY:event.clientY}));
+  }, {passive:false});
+  function finishTouch(event) {
+    if (event.pointerId !== touchPointer) return;
+    touchPointer = null;
+    document.dispatchEvent(new MouseEvent('mouseup'));
+  }
+  document.addEventListener('pointerup', finishTouch);
+  document.addEventListener('pointercancel', finishTouch);
+
+  function downloadFile(content, type, filename) {
+    const url = URL.createObjectURL(new Blob([content], {type}));
+    const link = document.createElement('a');
+    link.href = url; link.download = filename;
+    document.body.appendChild(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+
+  document.getElementById('saveJsonBtn').addEventListener('click', () => {
+    try {
+      parseNotes(jsonInputEl.value); // A malformed draft must not export stale notes.
+      downloadFile(JSON.stringify(notes, null, 2), 'application/json', 'humming-notes.json');
+      errorMsgEl.textContent = '';
+    } catch (e) {
+      errorMsgEl.textContent = 'JSONを保存できません。音符データの形式を確認してください。';
+    }
+  });
+  let importGeneration = 0;
+  document.getElementById('saveMidiBtn').addEventListener('click', () => {
+    try {
+      parseNotes(jsonInputEl.value);
+      const bpm = bpmInputEl.value.trim() === '' ? 120 : Number(bpmInputEl.value);
+      const bytes = window.HummingMidi.createMidi(notes, bpm);
+      downloadFile(bytes, 'audio/midi', 'humming-melody.mid');
+      errorMsgEl.textContent = '';
+    } catch (e) {
+      errorMsgEl.textContent = 'MIDI生成に失敗しました。音符があること、音符の値、BPM（40〜240）を確認してください。';
+    }
+  });
+  document.getElementById('jsonFile').addEventListener('change', async event => {
+    const input = event.target, file = input.files[0];
+    if (!file) return;
+    const token = ++importGeneration, initialJson = jsonInputEl.value;
+    const status = document.getElementById('fileStatus');
+    try {
+      if (file.size > 2 * 1024 * 1024) throw new Error('JSONは2MB以下のファイルを選んでください。');
+      const incoming = parseNotes((await file.text()).replace(/^\uFEFF/, ''));
+      if (token !== importGeneration) return;
+      if (initialJson !== jsonInputEl.value || dragBefore) throw new Error('読み込み中に音符が編集されました。もう一度ファイルを選んでください。');
+      replaceNotes(incoming);
+      status.textContent = `${incoming.length}個の音符を読み込みました（Undoで戻せます）。`;
+    } catch (e) {
+      status.textContent = '';
+      errorMsgEl.textContent = 'JSON読込に失敗しました。' + e.message;
+    } finally { input.value = ''; }
+  });
+
+  const detailEl = document.getElementById('noteDetail');
+  const reconvertBtn = document.getElementById('reconvertBtn');
+  const sourceAudio = document.getElementById('originalAudio');
+  let analysisTrack = null, analysisSource = '', analysing = false;
+  const segmentationSettings = () => window.HummingSegmenter.settingsForDetail(detailEl.value);
+  function updateReconvert() {
+    if (analysisSource !== sourceAudio.src) analysisTrack = null;
+    reconvertBtn.disabled = !analysisTrack || analysing || document.getElementById('recordBtn').disabled;
+  }
+  detailEl.addEventListener('input', () => {
+    const value = Number(detailEl.value);
+    document.getElementById('noteDetailLabel').textContent = value === 50 ? '標準' : value < 50 ? '細かい寄り' : 'なめらか寄り';
+  });
+  reconvertBtn.addEventListener('click', () => {
+    updateReconvert();
+    if (reconvertBtn.disabled || dragBefore) return;
+    const error = document.getElementById('recordError');
+    try {
+      const incoming = window.HummingSegmenter.segmentNotes(analysisTrack, segmentationSettings());
+      if (!incoming.length) throw new Error('音符を検出できませんでした。細かい側へ戻してお試しください。');
+      if (microphone) microphone.pause();
+      replaceNotes(incoming);
+      error.textContent = '';
+      document.getElementById('recordStatus').textContent = `${incoming.length}個の音符に再変換しました（Undoで戻せます）。`;
+    } catch(e) { error.textContent = e.message; }
+  });
+  const analysisObserver = new MutationObserver(updateReconvert);
+  analysisObserver.observe(sourceAudio, {attributes:true, attributeFilter:['src']});
+  analysisObserver.observe(document.getElementById('recordBtn'), {attributes:true, attributeFilter:['disabled']});
+
+  const microphone = window.HummingRecorder && window.HummingRecorder.mount({
+    onStart: stopPlayback,
+    onConvert: async buffer => {
+      const initialJson = jsonInputEl.value;
+      analysing = true; updateReconvert();
+      try {
+        if (!analysisTrack) {
+          analysisTrack = await window.HummingPitch.trackBuffer(buffer);
+          analysisSource = sourceAudio.src;
+        }
+        const incoming = window.HummingSegmenter.segmentNotes(analysisTrack, segmentationSettings());
+        if (!incoming.length) throw new Error('no-pitch');
+        if (jsonInputEl.value !== initialJson || dragBefore) throw new Error('editor-changed');
+        replaceNotes(incoming);
+        return incoming.length;
+      } finally { analysing = false; updateReconvert(); }
+    }
+  });
+  playBtn.addEventListener("click", () => { if (microphone) microphone.pause(); });
   playBtn.addEventListener("click", startPlayback);
   stopBtn.addEventListener("click", stopPlayback);
 
