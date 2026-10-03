@@ -55,13 +55,18 @@
     }
     return frames;
   }
-  async function trackBuffer(buffer) {
+  async function trackBuffer(buffer, {includeCandidates=false} = {}) {
     // The browser resampler applies antialias filtering; render only the first 30 seconds.
     const Offline = globalThis.OfflineAudioContext || globalThis.webkitOfflineAudioContext;
     const ctx = new Offline(1, Math.max(1, Math.ceil(Math.min(30, buffer.duration) * SAMPLE_RATE)), SAMPLE_RATE);
     const source = ctx.createBufferSource(); source.buffer = buffer; source.connect(ctx.destination); source.start();
     const mono = await ctx.startRendering();
-    return trackSamples(mono.getChannelData(0));
+    const samples = mono.getChannelData(0);
+    const frames = await trackSamples(samples);
+    if (!includeCandidates) return frames;
+    const octave = typeof module === 'object' && module.exports ? require('./octave-corrector.js') : globalThis.HummingOctave;
+    return octave.fromSamples(samples, frames);
+
   }
   return {detectPitch, trackSamples, trackBuffer, SAMPLE_RATE, HOP};
 });

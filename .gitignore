@@ -1,2 +1,11 @@
 .DS_Store
 old/
+
+# Local-only humming research and documentation
+/humming/README.md
+/humming/octave-lab.html
+/humming/octave-research.js
+inbox/
+.env
+__pycache__/
+.venv/

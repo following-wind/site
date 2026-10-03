@@ -417,6 +417,7 @@
 <div class="piano-roll-wrap" id="pianoRollWrap"></div>
 
 <div class="editor">
+  <button id="selectAllBtn" type="button" aria-pressed="false">全音符を選択</button>
   <span role="group" aria-label="音程">音程
     <button id="downBtn" type="button" title="半音下げる (↓キー)" disabled>▼</button>
     <button id="upBtn" type="button" title="半音上げる (↑キー)" disabled>▲</button>
@@ -448,8 +449,10 @@
 <div id="fileStatus" role="status" aria-live="polite"></div>
 
 <script src="recorder.js"></script>
+<script src="octave-corrector.js"></script>
 <script src="pitch-detector.js"></script>
 <script src="note-segmenter.js"></script>
+<script src="pitch-refiner.js"></script>
 <script src="midi-export.js"></script>
 <script>
 (function () {
@@ -528,11 +531,13 @@
   const selectionInfoEl = document.getElementById("selectionInfo");
   const bpmInputEl = document.getElementById("bpmInput");
   const quantizeBtn = document.getElementById('quantizeBtn');
+  const selectAllBtn = document.getElementById('selectAllBtn');
   const BEATS_PER_BAR = 4;
   const pianoRollWrapEl = document.getElementById("pianoRollWrap");
 
   let notes = [];          // 今テキストエリアに入っている音符(startの昇順)
   let selectedIndex = -1;  // 選択中の音符の位置(-1は未選択)
+  let allSelected = false; // Phase 1: all notes or the existing single-note selection.
   let pianoRollRange = { min: 48, max: 72 }; // メロディを読み直すたびに計算し直す(候補内では固定)
 
   // 単音の試し聞き用。再生用のaudioCtxは停止時にcloseするので別にしておく
@@ -543,7 +548,7 @@
   let dragBefore = null;
 
   function snapshot() {
-    return { notes: JSON.parse(JSON.stringify(notes)), selectedIndex };
+    return { notes: JSON.parse(JSON.stringify(notes)), selectedIndex, allSelected };
   }
 
   function updateHistoryButtons() {
@@ -569,7 +574,7 @@
     const state = from.pop();
     notes = JSON.parse(JSON.stringify(state.notes));
     const selected = notes[state.selectedIndex] || null;
-    commitNoteEdit(selected);
+    commitNoteEdit(selected, state.allSelected);
     updateHistoryButtons();
   }
 
@@ -611,6 +616,7 @@
     const svg = buildPianoRoll(notes, pianoRollRange, {
       bpm: currentHummingBpm(),
       selectedIndex,
+      allSelected,
       onNoteClick: selectNote,
       onNoteDrag: handleNoteDrag,
       onDragEnd: handleDragEnd,
@@ -648,13 +654,17 @@
 
   function updateSelectionUI() {
     noteChipsEl.querySelectorAll(".note-chip").forEach((el, i) => {
-      el.classList.toggle("selected", i === selectedIndex);
+      el.classList.toggle("selected", allSelected || i === selectedIndex);
     });
     const hasSelection = selectedIndex >= 0 && selectedIndex < notes.length;
     upBtn.disabled = !hasSelection;
     downBtn.disabled = !hasSelection;
     deleteNoteBtn.disabled = !hasSelection;
-    if (hasSelection) {
+    selectAllBtn.disabled = !notes.length || addNoteBtn.disabled;
+    selectAllBtn.setAttribute('aria-pressed', String(allSelected));
+    if (allSelected) {
+      selectionInfoEl.textContent = `全音符選択中：${notes.length}音 ／ ←→で全体移動。音符をクリックすると1音選択に戻ります`;
+    } else if (hasSelection) {
       const n = notes[selectedIndex];
       selectionInfoEl.textContent =
         `選択中: ${selectedIndex + 1}番目 ${n.note || ""} (midi ${n.midi}) ／ ↑↓キーでも変えられます`;
@@ -667,17 +677,20 @@
 
   function updateDurationButtons() {
     const n = notes[selectedIndex];
-    leftBtn.disabled = !n || n.start <= 0;
-    rightBtn.disabled = !n;
+    leftBtn.disabled = allSelected ? !notes.length || notes.some(note => note.start - sixteenthDuration() < 0) : !n || n.start <= 0;
+    rightBtn.disabled = allSelected ? !notes.length : !n;
     shortenBtn.disabled = !n || n.duration <= sixteenthDuration();
     lengthenBtn.disabled = !n;
-    durationHintEl.textContent = n
+    durationHintEl.textContent = allSelected
+      ? "1ステップ: " + sixteenthDuration().toFixed(3) + "秒 ／ ←→で全音符を移動"
+      : n
       ? "1ステップ: " + sixteenthDuration().toFixed(3) + "秒 ／ ←→は位置、−＋は長さ"
       : "";
   }
 
   function selectNote(index) {
     if (index < 0 || index >= notes.length) return;
+    allSelected = false;
     selectedIndex = index;
     updateSelectionUI();
     previewNote(notes[index].midi);
@@ -691,6 +704,7 @@
     } catch (e) {
       errorMsgEl.textContent = e.message;
       addNoteBtn.disabled = true;
+      allSelected = false;
       notes = [];
       selectedIndex = -1;
       noteChipsEl.innerHTML = "";
@@ -700,6 +714,7 @@
     errorMsgEl.textContent = "";
     addNoteBtn.disabled = false;
     notes = parsed.slice().sort((a, b) => a.start - b.start);
+    if (!notes.length) allSelected = false;
     pianoRollRange = notes.length ? computePianoRollRange(notes) : { min: 48, max: 72 };
     if (selectedIndex >= notes.length) selectedIndex = -1;
     renderChips();
@@ -857,7 +872,7 @@
 
       let cls = "piano-roll-note";
       if (opts.diffIndices && opts.diffIndices.has(i)) cls += " piano-roll-note-diff";
-      if (opts.selectedIndex === i) cls += " piano-roll-note-selected";
+      if (opts.allSelected || opts.selectedIndex === i) cls += " piano-roll-note-selected";
       rect.setAttribute("class", cls);
 
       if (opts.onNoteClick || opts.onNoteDrag) {
@@ -953,6 +968,17 @@
   }
 
   function shiftTime(field, direction) {
+    if (allSelected) {
+      if (field !== 'start' || !notes.length || dragBefore) return;
+      const offset = direction * sixteenthDuration();
+      // Reject the entire move: clamping individual starts would change spacing.
+      if (notes.some(note => note.start + offset < 0)) return;
+      const before = snapshot();
+      for (const note of notes) note.start += offset;
+      commitNoteEdit(null, true);
+      recordEdit(before);
+      return;
+    }
     const n = notes[selectedIndex];
     if (!n) return;
     const step = sixteenthDuration();
@@ -972,7 +998,7 @@
       note.start = Math.max(0, Math.round(note.start / step)) * step;
       note.duration = Math.max(1, Math.round(note.duration / step)) * step;
     }
-    commitNoteEdit(selected);
+    commitNoteEdit(selected, allSelected);
     recordEdit(before);
   });
 
@@ -990,8 +1016,9 @@
   }
 
   // notesを正本に、順序・選択・表示・JSONをまとめて更新する。
-  function commitNoteEdit(selectedNote = null) {
+  function commitNoteEdit(selectedNote = null, keepAllSelected = false) {
     stopPlayback();
+    allSelected = !!keepAllSelected && notes.length > 0;
     notes.sort((a, b) => a.start - b.start);
     selectedIndex = selectedNote ? notes.indexOf(selectedNote) : -1;
     pianoRollRange = notes.length ? computePianoRollRange(notes) : { min: 48, max: 72 };
@@ -1023,6 +1050,12 @@
   }
 
   addNoteBtn.addEventListener("click", addNote);
+  selectAllBtn.addEventListener('click', () => {
+    if (selectAllBtn.disabled || dragBefore) return;
+    selectedIndex = -1;
+    allSelected = true;
+    updateSelectionUI();
+  });
   deleteNoteBtn.addEventListener("click", deleteNote);
   upBtn.addEventListener("click", () => shiftSelected(1));
   downBtn.addEventListener("click", () => shiftSelected(-1));
@@ -1046,7 +1079,15 @@
       }
       return;
     }
-    if (dragBefore || selectedIndex < 0 || e.repeat) return; // 長押しで履歴を大量に積まない
+    if (dragBefore || e.repeat) return; // 長押しで履歴を大量に積まない
+    if (allSelected) {
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        shiftTime('start', e.key === 'ArrowRight' ? 1 : -1);
+      }
+      return;
+    }
+    if (selectedIndex < 0) return;
     if (e.key === "Delete" || e.key === "Backspace") {
       e.preventDefault();
       deleteNote();
@@ -1068,6 +1109,7 @@
   // ユーザーがJSONを直接書き換えたら、チップも作り直す
   jsonInputEl.addEventListener("input", () => {
     if (writingBack) return;
+    allSelected = false;
     stopPlayback();
     dragBefore = null;
     undoStack.length = 0;
@@ -1283,10 +1325,14 @@
   const detailEl = document.getElementById('noteDetail');
   const reconvertBtn = document.getElementById('reconvertBtn');
   const sourceAudio = document.getElementById('originalAudio');
-  let analysisTrack = null, analysisSource = '', analysing = false;
+  let analysisTrack = null, pitchTrack = null, analysisSource = '', analysing = false;
   const segmentationSettings = () => window.HummingSegmenter.settingsForDetail(detailEl.value);
+  function analysedNotes() {
+    const segmented = window.HummingSegmenter.segmentNotes(analysisTrack, segmentationSettings());
+    return window.HummingPitchRefiner.refine(pitchTrack, segmented);
+  }
   function updateReconvert() {
-    if (analysisSource !== sourceAudio.src) analysisTrack = null;
+    if (analysisSource !== sourceAudio.src) { analysisTrack = null; pitchTrack = null; }
     reconvertBtn.disabled = !analysisTrack || analysing || document.getElementById('recordBtn').disabled;
   }
   detailEl.addEventListener('input', () => {
@@ -1298,7 +1344,7 @@
     if (reconvertBtn.disabled || dragBefore) return;
     const error = document.getElementById('recordError');
     try {
-      const incoming = window.HummingSegmenter.segmentNotes(analysisTrack, segmentationSettings());
+      const incoming = analysedNotes();
       if (!incoming.length) throw new Error('音符を検出できませんでした。細かい側へ戻してお試しください。');
       if (microphone) microphone.pause();
       replaceNotes(incoming);
@@ -1317,10 +1363,11 @@
       analysing = true; updateReconvert();
       try {
         if (!analysisTrack) {
-          analysisTrack = await window.HummingPitch.trackBuffer(buffer);
+          analysisTrack = await window.HummingPitch.trackBuffer(buffer, {includeCandidates:true});
+          pitchTrack = window.HummingOctave.correct(analysisTrack).track;
           analysisSource = sourceAudio.src;
         }
-        const incoming = window.HummingSegmenter.segmentNotes(analysisTrack, segmentationSettings());
+        const incoming = analysedNotes();
         if (!incoming.length) throw new Error('no-pitch');
         if (jsonInputEl.value !== initialJson || dragBefore) throw new Error('editor-changed');
         replaceNotes(incoming);
