@@ -7,5 +7,11 @@ old/
 /humming/octave-research.js
 inbox/
 .env
+*.env
+.env.*
+credentials.ini
+credentials.*
+*.pem
+*.key
 __pycache__/
 .venv/
